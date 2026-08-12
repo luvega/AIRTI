@@ -1,0 +1,5 @@
+runtime:
+  executor: local
+  artifact_root: /data/airti-target-fishing
+  cache_root: /mnt/ssd4t/airti-target-fishing
+

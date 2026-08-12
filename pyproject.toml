@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 chem = ["biopython>=1.85,<2", "rdkit>=2025.3"]
-dev = ["mypy>=1.14,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.12,<0.13"]
+dev = ["mypy>=1.14,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.12,<0.13", "types-PyYAML>=6.0"]
 
 [project.scripts]
 airti-tf = "airti_tf.cli:app"
@@ -36,3 +36,6 @@ python_version = "3.11"
 packages = ["airti_tf"]
 strict = true
 
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true

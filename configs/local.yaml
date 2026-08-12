@@ -1,0 +1,5 @@
+runtime:
+  executor: local
+  artifact_root: work
+  cache_root: work/cache
+

@@ -1,0 +1,27 @@
+schema_version: "1.0"
+screen:
+  backend: quickvina2
+  seeds: [11, 29, 47]
+  exhaustiveness: 8
+  background_probe_count: 100
+routing:
+  screen_top_n: 300
+  boltz_top_n: 30
+  md_top_n: 10
+  md_replica_top_n: 3
+boltz:
+  diffusion_samples: 3
+  affinity_samples: 3
+md:
+  duration_ns: 100
+  timestep_fs: 2
+  forcefield: amber_ff19sb
+  ligand_forcefield: gaff2
+  water_model: tip3p
+report:
+  final_top_n: 5
+runtime:
+  executor: local
+  artifact_root: work
+  cache_root: work/cache
+
