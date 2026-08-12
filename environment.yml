@@ -5,6 +5,7 @@ dependencies:
   - python=3.11
   - pip
   - biopython>=1.85
+  - dimorphite-dl=2.0.2
   - pandas>=2.3
   - pydantic>=2.10
   - pytest>=8.3
@@ -13,4 +14,3 @@ dependencies:
   - typer>=0.16
   - pip:
       - pydantic-settings>=2.6
-
