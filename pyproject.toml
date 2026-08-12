@@ -39,3 +39,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["yaml", "rdkit.*", "dimorphite_dl.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["airti_tf.ligands.prepare", "airti_tf.screening.background"]
+disable_error_code = ["attr-defined", "no-untyped-call"]

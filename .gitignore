@@ -4,6 +4,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .tmp/
+.tools/
+.nextflow*
+dag-*.html
+report-*.html
+timeline-*.html
+trace-*.txt
 *.egg-info/
 *.py[cod]
 work/
