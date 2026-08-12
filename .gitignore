@@ -3,9 +3,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tmp/
 *.egg-info/
 *.py[cod]
 work/
 results/
 data/runtime/
-
