@@ -1,0 +1,7 @@
+Entry	Reviewed	Gene Names (primary)	Organism (ID)	Sequence
+P04637	reviewed	TP53	9606	MEEPQSDPSV
+P00533	unreviewed	EGFR	9606	MRPSGTAGAA
+P00533	reviewed	EGFR	9606	MRPSGTAGAA
+P00533-2	reviewed	EGFR	9606	MRPSGTAG
+Q9MOUSE	reviewed	MouseGene	10090	MPEPTIDE
+

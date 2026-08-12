@@ -49,6 +49,12 @@ def _atomic_write(path: Path, raw: bytes) -> None:
         raise
 
 
+def write_bytes_atomic(path: Path, raw: bytes) -> str:
+    """Write arbitrary bytes atomically and return their content digest."""
+    _atomic_write(path, raw)
+    return content_sha256(raw)
+
+
 def write_jsonl_atomic(path: Path, records: Iterable[dict[str, Any]]) -> str:
     """Write a canonical JSONL manifest atomically and return its digest."""
     raw = b"".join(canonical_json_bytes(record) + b"\n" for record in records)
@@ -82,4 +88,3 @@ def write_artifact(path: Path, payload: Any) -> WrittenArtifact:
     digest = content_sha256(raw)
     _atomic_write(path, raw)
     return WrittenArtifact(artifact_id=digest, sha256=digest, path=path)
-

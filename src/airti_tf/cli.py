@@ -10,6 +10,8 @@ from airti_tf.manifest_io import write_artifact
 from airti_tf.runtime import collect_host_facts, run_preflight
 
 app = typer.Typer(no_args_is_help=True)
+targets_app = typer.Typer(no_args_is_help=True)
+app.add_typer(targets_app, name="targets")
 
 
 class Profile(StrEnum):
@@ -40,6 +42,23 @@ def preflight(
     typer.echo(result.model_dump_json(indent=2))
     if result.exit_code:
         raise typer.Exit(result.exit_code)
+
+
+@targets_app.command("fetch-uniprot")
+def fetch_uniprot(
+    proteome: str = typer.Option("UP000005640"),
+    release: str = typer.Option(...),
+    output: Path = typer.Option(..., "--out"),
+) -> None:
+    """Fetch a release-pinned human canonical proteome snapshot."""
+    from airti_tf.sources.uniprot import fetch_uniprot_snapshot
+
+    snapshot = fetch_uniprot_snapshot(
+        proteome=proteome,
+        release=release,
+        output_dir=output,
+    )
+    typer.echo(snapshot.manifest_path)
 
 
 if __name__ == "__main__":

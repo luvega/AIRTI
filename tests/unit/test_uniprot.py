@@ -1,0 +1,78 @@
+import gzip
+import io
+import json
+from pathlib import Path
+
+from airti_tf.sources.uniprot import (
+    build_uniprot_url,
+    fetch_uniprot_snapshot,
+    parse_uniprot_tsv,
+    write_proteome_snapshot,
+)
+
+
+def test_builds_canonical_manifest() -> None:
+    fixture = Path("tests/fixtures/uniprot_human_sample.tsv")
+
+    records = parse_uniprot_tsv(fixture, release="2026_03")
+
+    assert [record.uniprot_id for record in records] == ["P00533", "P04637"]
+    assert all(record.taxonomy_id == 9606 for record in records)
+    assert all(record.sequence_sha256 for record in records)
+    assert records[0].reviewed is True
+    assert records[0].isoform_aliases == ["P00533-2"]
+
+
+def test_reference_proteome_query_does_not_filter_unreviewed() -> None:
+    url = build_uniprot_url(proteome="UP000005640")
+
+    assert "proteome%3AUP000005640" in url
+    assert "reviewed%3Atrue" not in url
+    assert "organism_id" in url
+
+
+def test_snapshot_is_versioned_and_summarized(tmp_path: Path) -> None:
+    records = parse_uniprot_tsv(
+        Path("tests/fixtures/uniprot_human_sample.tsv"), release="2026_03"
+    )
+
+    snapshot = write_proteome_snapshot(
+        records,
+        output_dir=tmp_path,
+        release="2026_03",
+        source_sha256="f" * 64,
+        request_url="https://rest.uniprot.org/example",
+        etag='"fixture"',
+    )
+
+    assert snapshot.manifest_path.name == "human_canonical_proteome.jsonl"
+    summary = json.loads(snapshot.summary_path.read_text(encoding="utf-8"))
+    assert summary["record_count"] == 2
+    assert summary["reviewed_count"] == 2
+    assert summary["unreviewed_count"] == 0
+    assert summary["release"] == "2026_03"
+    assert summary["source_sha256"] == "f" * 64
+
+
+def test_fetch_records_release_etag_and_raw_hash(tmp_path: Path) -> None:
+    raw_tsv = Path("tests/fixtures/uniprot_human_sample.tsv").read_bytes()
+    compressed_tsv = gzip.compress(raw_tsv, mtime=0)
+
+    class Response(io.BytesIO):
+        headers = {"X-UniProt-Release": "2026_03", "ETag": '"fixture-etag"'}
+
+    def opener(request_url: str) -> Response:
+        assert "UP000005640" in request_url
+        return Response(compressed_tsv)
+
+    snapshot = fetch_uniprot_snapshot(
+        proteome="UP000005640",
+        release="2026_03",
+        output_dir=tmp_path,
+        opener=opener,
+    )
+
+    summary = json.loads(snapshot.summary_path.read_text(encoding="utf-8"))
+    assert summary["etag"] == '"fixture-etag"'
+    assert len(summary["source_sha256"]) == 64
+    assert (tmp_path / "uniprot_human_2026_03.tsv.gz").read_bytes() == compressed_tsv
