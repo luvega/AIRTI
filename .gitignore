@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .tmp/
 .tools/
+.worktrees/
 .nextflow*
 dag-*.html
 report-*.html
