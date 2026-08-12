@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airti-tf"
+version = "0.1.0"
+description = "Auditable human-proteome reverse target fishing pipeline"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "jinja2>=3.1,<4",
+  "pandas>=2.3,<3",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.6,<3",
+  "pyyaml>=6.0,<7",
+  "typer>=0.16,<0.22",
+]
+
+[project.optional-dependencies]
+chem = ["biopython>=1.85,<2", "rdkit>=2025.3"]
+dev = ["mypy>=1.14,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.12,<0.13"]
+
+[project.scripts]
+airti-tf = "airti_tf.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["airti_tf"]
+strict = true
+

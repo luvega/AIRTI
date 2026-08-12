@@ -1,0 +1,16 @@
+name: airti-tf
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - biopython>=1.85
+  - pandas>=2.3
+  - pydantic>=2.10
+  - pytest>=8.3
+  - pyyaml>=6.0
+  - rdkit>=2025.03
+  - typer>=0.16
+  - pip:
+      - pydantic-settings>=2.6
+
