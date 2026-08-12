@@ -1,0 +1,9 @@
+Pocket 1 :
+	Score : 31.500
+	Druggability Score : 0.720
+	Volume : 245.400
+Pocket 2 :
+	Score : 12.100
+	Druggability Score : 0.180
+	Volume : 95.000
+
