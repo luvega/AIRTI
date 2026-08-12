@@ -1,0 +1,19 @@
+[
+  {
+    "structure_id": "AF-P00533-F1",
+    "source": "alphafold",
+    "coverage": 0.99,
+    "sequence_identity": 1.0,
+    "confidence": 0.88,
+    "pae_supported": true
+  },
+  {
+    "structure_id": "1M17",
+    "source": "pdb",
+    "coverage": 0.85,
+    "sequence_identity": 1.0,
+    "resolution": 2.1,
+    "has_ligand": true
+  }
+]
+
