@@ -1,0 +1,48 @@
+{
+  "project_id": "AIRTI-DEMO-001",
+  "generated_at": "2026-08-12T18:00:00+08:00",
+  "query_ligands": ["query-1"],
+  "conclusion": "EGFR 是结构与动力学证据共同支持的优先候选，建议开展正交实验验证。",
+  "coverage": {
+    "total": 20435,
+    "ready": 16800,
+    "unsupported": 3635,
+    "artifact_id": "coverage-table"
+  },
+  "top_targets": [
+    {
+      "rank": 1,
+      "target_id": "P00533",
+      "gene_symbol": "EGFR",
+      "priority": 0.91,
+      "evidence_tier": "full_three_stage",
+      "vina_score": 0.88,
+      "boltz_score": 0.84,
+      "md_score": 0.79,
+      "uncertainty_flags": [],
+      "artifact_id": "rank-table"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "coverage-table",
+      "task_id": "task-coverage",
+      "path": "tables/proteome_coverage.csv",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "artifact_id": "rank-table",
+      "task_id": "task-ranking",
+      "path": "tables/top100_targets.csv",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "limitations": [
+    "计算排序用于候选富集，不能替代直接结合、细胞占有和遗传因果实验。",
+    "结构缺失或口袋质量不足的蛋白保留为 unsupported，不作零分处理。"
+  ],
+  "wet_lab_recommendations": [
+    "对 Top 5 候选优先开展 CETSA/TPP 或 SPR/MST 复核。",
+    "对通过结合验证的候选开展 CRISPR/回补与表型救援。"
+  ]
+}

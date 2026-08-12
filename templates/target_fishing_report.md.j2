@@ -1,0 +1,53 @@
+---
+title: "AI 反向钓靶计算报告"
+project_id: "{{ context.project_id }}"
+generated_at: "{{ context.generated_at }}"
+evidence_level: "computational-candidate"
+---
+
+# AI 反向钓靶计算报告
+
+## 项目输入
+
+- 项目编号：{{ context.project_id }}
+- 查询分子：{{ context.query_ligands | join("、") }}
+- 输入分子数：{{ metric(context.query_ligands | length, context.coverage.artifact_id) }}
+
+## 全人蛋白组覆盖率
+
+| 指标 | 数值 | 证据工件 |
+|---|---:|---|
+| canonical 人源蛋白总数 | {{ metric(context.coverage.total, context.coverage.artifact_id) }} | `artifact:{{ context.coverage.artifact_id }}` |
+| 可计算靶点 | {{ metric(context.coverage.ready, context.coverage.artifact_id) }} | `artifact:{{ context.coverage.artifact_id }}` |
+| unsupported 靶点 | {{ metric(context.coverage.unsupported, context.coverage.artifact_id) }} | `artifact:{{ context.coverage.artifact_id }}` |
+
+## 候选靶点排序
+
+计算分数仅用于候选富集。缺失证据保留为 `NA`，不换算为零。
+
+| 排名 | UniProt | 基因 | 综合优先级 | Vina | Boltz-2 | MD | 证据层级 | 不确定性 | 证据工件 |
+|---:|---|---|---:|---:|---:|---:|---|---|---|
+{% for target in context.top_targets %}| {{ metric(target.rank, target.artifact_id) }} | {{ target.target_id }} | {{ target.gene_symbol }} | {{ metric(target.priority, target.artifact_id) }} | {{ metric(target.vina_score, target.artifact_id) }} | {{ metric(target.boltz_score, target.artifact_id) }} | {{ metric(target.md_score, target.artifact_id) }} | {{ target.evidence_tier }} | {{ target.uncertainty_flags | join("；") if target.uncertainty_flags else "无已登记风险项" }} | `artifact:{{ target.artifact_id }}` |
+{% endfor %}
+
+## 结论边界
+
+{{ context.conclusion }}
+
+本报告输出的是候选靶点优先级，不构成直接结合、细胞内占有或表型因果关系的实验证明。
+
+## 局限性
+
+{% for item in context.limitations %}- {{ item }}
+{% endfor %}
+
+## 湿实验建议
+
+{% for item in context.wet_lab_recommendations %}{{ loop.index }}. {{ item }}
+{% endfor %}
+
+## 审计索引
+
+{% for artifact in context.artifacts %}- `artifact:{{ artifact.artifact_id }}`；任务 `{{ artifact.task_id }}`；路径 `{{ artifact.path }}`；SHA-256 `{{ artifact.sha256 }}`
+{% endfor %}
+
