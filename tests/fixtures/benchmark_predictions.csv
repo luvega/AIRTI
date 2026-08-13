@@ -1,0 +1,5 @@
+ligand_id,role,rank,target_id,is_direct_human_target,family
+smoke_01,smoke,1,P00533,true,kinase
+retro_01,retrospective_train,1,P00533,true,kinase
+retro_02,retrospective_validation,1,P04637,true,transcription_factor
+blind_01,blind,1,P35354,true,GPCR

@@ -1,0 +1,48 @@
+schema_version: "1.0"
+random_seed: 20260812
+bootstrap_iterations: 10000
+
+datasets:
+  smoke:
+    expected_compounds: 10
+    purpose: toolchain_and_failure_recovery
+  retrospective_train:
+    purpose: fit_ranking_weights
+    split_grouping: [bemis_murcko_scaffold, target_family]
+  retrospective_validation:
+    purpose: select_thresholds_and_freeze_weights
+    split_grouping: [bemis_murcko_scaffold, target_family]
+  blind:
+    expected_compounds_min: 20
+    expected_compounds_max: 30
+    purpose: one_time_release_evaluation
+
+truth:
+  species: Homo sapiens
+  interaction: direct_binding
+  require_traceable_experimental_evidence: true
+  exclude: [pathway_association, expression_change, prediction_only]
+
+metrics:
+  retrieval_k: [10, 50, 100]
+  report: [success_at_k, target_recall_at_k, mrr, technical_success_rate, computable_proteome_fraction, top20_jaccard]
+
+ablations:
+  - quickvina2_only
+  - quickvina2_plus_boltz2
+  - complete_three_stage
+  - without_structure_quality
+  - without_background_calibration
+  - without_family_diversification
+  - random_ranking
+  - pocket_druggability_only
+  - autodock_vina_control
+
+release_gate:
+  blind_success_at_100_min: 0.30
+  technical_success_rate_min: 0.95
+  boltz_not_worse_than_vina: true
+  successful_target_families_min: 3
+  median_top20_jaccard_min: 0.70
+  require_failure_auditability: true
+  require_report_integrity: true

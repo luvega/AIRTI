@@ -1,0 +1,7 @@
+#include "amber99sb-ildn.ff/forcefield.itp"
+#include "amber99sb-ildn.ff/tip3p.itp"
+
+[ system ]
+AIRTI water-box GPU smoke
+
+[ molecules ]

@@ -1,0 +1,12 @@
+schema_version: "1.0"
+generated_at: "2026-08-13T10:00:00+08:00"
+
+boltz2:
+  version: "2.2.1"
+  cache_root: "/mnt/ssd4t/airti-target-fishing/boltz"
+  confidence:
+    file: "boltz2_conf.ckpt"
+    sha256: "sha256:090e82ac8c92f5e943fa1b39e7410a44027bea7243c0bbb3caa67a77fc1428e1"
+  affinity:
+    file: "boltz2_aff.ckpt"
+    sha256: "sha256:dcc5cd3722b1c9eaa34267e4ae32f55cbbf1963f4c19319381ccfa30fdd2ca9e"

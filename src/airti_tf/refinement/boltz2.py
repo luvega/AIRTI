@@ -6,10 +6,15 @@ import json
 import math
 import re
 import statistics
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
+from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from airti_tf.manifest_io import write_artifact, write_bytes_atomic
 
 
 class MissingMSAError(FileNotFoundError):
@@ -35,6 +40,7 @@ class BoltzJob(BaseModel):
     pocket_residues: list[int] = Field(min_length=1)
     input_yaml: Path
     output_dir: Path
+    cache_path: Path | None = None
 
 
 class BoltzSeedResult(BaseModel):
@@ -79,6 +85,27 @@ class BoltzSummary(BaseModel):
     pocket_constraint_median: float = Field(ge=0, le=1)
     confidence_range: float = Field(ge=0)
     successful_seeds: list[int]
+
+
+class BoltzStructureQuality(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pocket_constraint_fraction: float = Field(ge=0, le=1)
+    severe_clash: bool
+    minimum_interatomic_distance_a: float = Field(ge=0)
+    evaluated_pocket_residue_count: int = Field(gt=0)
+
+
+class BoltzExecutionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    return_code: int
+    stdout: str
+    stderr: str
+    timed_out: bool
+
+
+BoltzExecutor = Callable[[list[str], int], BoltzExecutionResult]
 
 
 def msa_cache_path(
@@ -128,7 +155,7 @@ def build_boltz_yaml(
 
 def build_boltz_command(job: BoltzJob, *, seed: int) -> list[str]:
     """Build a deterministic three-sample Boltz-2 prediction command."""
-    return [
+    command = [
         "boltz",
         "predict",
         str(job.input_yaml),
@@ -142,10 +169,15 @@ def build_boltz_command(job: BoltzJob, *, seed: int) -> list[str]:
         "3",
         "--max_parallel_samples",
         "1",
+        "--num_workers",
+        "0",
         "--seed",
         str(seed),
         "--use_potentials",
     ]
+    if job.cache_path is not None:
+        command.extend(["--cache", str(job.cache_path)])
+    return command
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -238,6 +270,12 @@ def summarize_boltz_seeds(records: list[BoltzSeedResult]) -> BoltzSummary:
 def classify_boltz_failure(stderr: str) -> str:
     """Map Boltz failures to stable codes used by retry policy."""
     lowered = stderr.lower()
+    if (
+        "no locator available" in lowered
+        or "no writable cache directories" in lowered
+        or "permission denied" in lowered and "cache" in lowered
+    ):
+        return "runtime_environment"
     if "out of memory" in lowered or "cuda oom" in lowered:
         return "cuda_oom"
     if "yaml" in lowered:
@@ -248,6 +286,196 @@ def classify_boltz_failure(stderr: str) -> str:
         return "nan_output"
     if "constraint" in lowered:
         return "constraint_violation"
-    if "msa" in lowered:
+    if re.search(
+        r"(?:msa|a3m).{0,80}(?:not found|no such file|does not exist|missing)",
+        lowered,
+        flags=re.DOTALL,
+    ):
         return "missing_msa"
     return "nonzero_exit"
+
+
+def _to_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    return value.decode(errors="replace") if isinstance(value, bytes) else value
+
+
+def _subprocess_executor(
+    command: list[str], timeout_seconds: int
+) -> BoltzExecutionResult:
+    try:
+        process = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        return BoltzExecutionResult(
+            return_code=124,
+            stdout=_to_text(error.stdout),
+            stderr=_to_text(error.stderr),
+            timed_out=True,
+        )
+    return BoltzExecutionResult(
+        return_code=process.returncode,
+        stdout=process.stdout,
+        stderr=process.stderr,
+        timed_out=False,
+    )
+
+
+def run_boltz_seed(
+    job: BoltzJob,
+    *,
+    seed: int,
+    executor: BoltzExecutor = _subprocess_executor,
+    timeout_seconds: int = 7_200,
+) -> BoltzSeedResult:
+    """Execute one Boltz seed, generate structural QC, and parse its outputs."""
+    job.output_dir.mkdir(parents=True, exist_ok=True)
+    command = build_boltz_command(job, seed=seed)
+    result = executor(command, timeout_seconds)
+    stdout_sha256 = write_bytes_atomic(
+        job.output_dir / "boltz.stdout.log", result.stdout.encode("utf-8")
+    )
+    stderr_sha256 = write_bytes_atomic(
+        job.output_dir / "boltz.stderr.log", result.stderr.encode("utf-8")
+    )
+    write_artifact(
+        job.output_dir / "boltz.execution.json",
+        {
+            "command": command,
+            "return_code": result.return_code,
+            "seed": seed,
+            "stderr_sha256": stderr_sha256,
+            "stdout_sha256": stdout_sha256,
+            "timed_out": result.timed_out,
+        },
+    )
+    if result.timed_out:
+        return BoltzSeedResult(seed=seed, status="failed", error_code="timeout")
+    if result.return_code != 0:
+        return BoltzSeedResult(
+            seed=seed,
+            status="failed",
+            error_code=classify_boltz_failure(result.stderr or result.stdout),
+        )
+    input_stem = job.input_yaml.stem
+    result_root = job.output_dir / f"boltz_results_{input_stem}"
+    if not result_root.is_dir() and (job.output_dir / "predictions").is_dir():
+        result_root = job.output_dir
+    prediction_dir = result_root / "predictions" / input_stem
+    structure_path = prediction_dir / f"{input_stem}_model_0.cif"
+    if not structure_path.is_file():
+        return BoltzSeedResult(seed=seed, status="failed", error_code="output_missing")
+    quality_path = prediction_dir / "airti_quality.json"
+    if not quality_path.is_file():
+        try:
+            write_boltz_quality(
+                structure_path,
+                pocket_residues=job.pocket_residues,
+            )
+        except (OSError, TypeError, ValueError):
+            return BoltzSeedResult(
+                seed=seed,
+                status="failed",
+                error_code="structural_qc_failed",
+            )
+    return parse_boltz_output(result_root, input_stem=input_stem, seed=seed)
+
+
+def _as_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def assess_boltz_structure(
+    structure_path: Path,
+    *,
+    pocket_residues: list[int],
+    contact_distance_a: float = 6.0,
+    clash_distance_a: float = 1.2,
+) -> BoltzStructureQuality:
+    """Measure predicted pocket retention and protein-ligand atomic clashes."""
+    if not pocket_residues:
+        raise ValueError("at least one pocket residue is required for Boltz QC")
+    payload = MMCIF2Dict(str(structure_path))  # type: ignore[no-untyped-call]
+    required = (
+        "_atom_site.auth_asym_id",
+        "_atom_site.auth_seq_id",
+        "_atom_site.Cartn_x",
+        "_atom_site.Cartn_y",
+        "_atom_site.Cartn_z",
+    )
+    missing = [key for key in required if key not in payload]
+    if missing:
+        raise ValueError(f"Boltz mmCIF lacks atom-site fields: {missing}")
+    chains = _as_list(payload["_atom_site.auth_asym_id"])
+    residues = _as_list(payload["_atom_site.auth_seq_id"])
+    xs = _as_list(payload["_atom_site.Cartn_x"])
+    ys = _as_list(payload["_atom_site.Cartn_y"])
+    zs = _as_list(payload["_atom_site.Cartn_z"])
+    lengths = {len(chains), len(residues), len(xs), len(ys), len(zs)}
+    if len(lengths) != 1:
+        raise ValueError("Boltz mmCIF atom-site columns have inconsistent lengths")
+
+    protein_by_residue: dict[int, list[tuple[float, float, float]]] = {}
+    ligand_atoms: list[tuple[float, float, float]] = []
+    protein_atoms: list[tuple[float, float, float]] = []
+    for chain, raw_residue, raw_x, raw_y, raw_z in zip(
+        chains, residues, xs, ys, zs, strict=True
+    ):
+        coordinate = (float(raw_x), float(raw_y), float(raw_z))
+        if chain == "B":
+            ligand_atoms.append(coordinate)
+            continue
+        if chain != "A":
+            continue
+        protein_atoms.append(coordinate)
+        try:
+            residue = int(raw_residue)
+        except ValueError:
+            continue
+        protein_by_residue.setdefault(residue, []).append(coordinate)
+    if not protein_atoms or not ligand_atoms:
+        raise ValueError("Boltz mmCIF must contain protein chain A and ligand chain B")
+
+    def distance(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+        return math.sqrt(sum((a - b) ** 2 for a, b in zip(left, right, strict=True)))
+
+    minimum = min(distance(protein, ligand) for protein in protein_atoms for ligand in ligand_atoms)
+    unique_pocket_residues = sorted(set(pocket_residues))
+    contacted = 0
+    for residue in unique_pocket_residues:
+        atoms = protein_by_residue.get(residue, [])
+        if any(
+            distance(protein, ligand) <= contact_distance_a
+            for protein in atoms
+            for ligand in ligand_atoms
+        ):
+            contacted += 1
+    return BoltzStructureQuality(
+        pocket_constraint_fraction=contacted / len(unique_pocket_residues),
+        severe_clash=minimum < clash_distance_a,
+        minimum_interatomic_distance_a=minimum,
+        evaluated_pocket_residue_count=len(unique_pocket_residues),
+    )
+
+
+def write_boltz_quality(
+    structure_path: Path,
+    *,
+    pocket_residues: list[int],
+) -> Path:
+    """Write the structural QC sidecar consumed by ``parse_boltz_output``."""
+    quality = assess_boltz_structure(
+        structure_path,
+        pocket_residues=pocket_residues,
+    )
+    output = structure_path.parent / "airti_quality.json"
+    write_artifact(output, quality.model_dump(mode="json"))
+    return output

@@ -1,0 +1,29 @@
+schema_version: "1.0"
+generated_at: "2026-08-13T21:46:00+08:00"
+
+base_images:
+  micromamba:
+    reference: "mambaorg/micromamba:2.9.0"
+    digest: "sha256:b62ed0c54940e3c801642d72ba7d2462f06356c378eba92d603d39f2ce5e4a0d"
+
+tools:
+  ambertools: "24.8"
+  autodock_vina: "1.2.7"
+  boltz: "2.2.1"
+  fpocket: "4.2.3"
+  gromacs: "2025.4"
+  meeko: "0.7.1"
+  parmed: "4.3.1"
+  qvina: "2.1.0"
+
+images:
+  production:
+    tag: "airti-tf:0.1.0-gpu"
+    digest: "sha256:97b8f44286f4457e1630ce7c21dda5ef7b6692fcfbf209c8142dd43999c77de8"
+    size_bytes: 16815059528
+    source_revision: "dc13f2771b81bb0290f6f5a7d51f64045efe36c2"
+    sbom: "docs/sbom/airti-tf-0.1.0-gpu.spdx.json"
+    sbom_sha256: "298b79434ed94e035f7959429957e6e72abadaefd390719a65bcafc4f441069a"
+    sbom_generator: "anchore/syft:v1.50.0@sha256:1288ea4c8b38767b4e620c1e312c8cb26b6e887a99b4f07ab6cd19fc6f225026"
+    smoke_status: passed
+    smoke_hardware: "NVIDIA GeForce RTX 4090 (48507 MiB)"

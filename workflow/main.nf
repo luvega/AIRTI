@@ -13,11 +13,22 @@ workflow {
     }
 
     query_ch = Channel.fromPath(params.queries, checkIfExists: true)
-    targets = TARGET_LIBRARY()
+    if (params.mock_tools) {
+        targets = TARGET_LIBRARY().library
+    } else {
+        target_manifest_ch = Channel.fromPath(
+            params.target_manifest,
+            checkIfExists: true,
+        )
+        target_assets_ch = Channel.fromPath(
+            params.target_assets,
+            checkIfExists: true,
+        )
+        targets = target_manifest_ch.combine(target_assets_ch)
+    }
     ligands = LIGAND_PREP(query_ch)
-    screened = SCREEN(ligands.prepared, targets.manifest)
+    screened = SCREEN(ligands.prepared, targets)
     refined = REFINE(screened.calibrated)
     simulated = MD(refined.selected)
     REPORT(simulated.completed)
 }
-

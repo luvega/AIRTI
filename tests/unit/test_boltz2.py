@@ -1,9 +1,11 @@
 from pathlib import Path
+import shutil
 
 import pytest
 
 from airti_tf.refinement.boltz2 import (
     BoltzJob,
+    BoltzExecutionResult,
     BoltzSeedResult,
     InsufficientBoltzSeedsError,
     MissingMSAError,
@@ -12,7 +14,10 @@ from airti_tf.refinement.boltz2 import (
     classify_boltz_failure,
     msa_cache_path,
     parse_boltz_output,
+    assess_boltz_structure,
+    run_boltz_seed,
     summarize_boltz_seeds,
+    write_boltz_quality,
 )
 
 
@@ -38,6 +43,7 @@ def job(msa: Path, tmp_path: Path) -> BoltzJob:
         pocket_residues=[718, 719],
         input_yaml=tmp_path / "job1.yaml",
         output_dir=tmp_path / "seed11",
+        cache_path=tmp_path / "boltz-cache",
     )
 
 
@@ -75,6 +81,7 @@ def test_command_uses_three_samples_seed_and_potentials(job: BoltzJob) -> None:
     assert command[command.index("--diffusion_samples") + 1] == "3"
     assert command[command.index("--diffusion_samples_affinity") + 1] == "3"
     assert command[command.index("--seed") + 1] == "29"
+    assert command[command.index("--cache") + 1] == str(job.cache_path)
     assert "--use_potentials" in command
 
 
@@ -141,3 +148,77 @@ def test_clashing_seed_does_not_count_as_success() -> None:
 def test_failure_classification(stderr: str, expected: str) -> None:
     assert classify_boltz_failure(stderr) == expected
 
+
+def test_numba_cache_trace_is_not_misclassified_as_missing_msa() -> None:
+    stderr = (
+        "File '/opt/conda/lib/python3.11/site-packages/boltz/data/feature/"
+        "featurizer.py', in _prepare_msa_arrays_inner\n"
+        "RuntimeError: cannot cache function: no locator available"
+    )
+
+    assert classify_boltz_failure(stderr) == "runtime_environment"
+
+
+def test_structural_qc_measures_pocket_contacts_and_clashes(tmp_path: Path) -> None:
+    structure = tmp_path / "prediction.cif"
+    structure.write_text(
+        """data_model
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.label_asym_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_asym_id
+ATOM 1 C CA ALA 1 1 A 0.0 0.0 0.0 A
+ATOM 2 C CA GLY 2 2 A 20.0 0.0 0.0 A
+HETATM 3 C C1 LIG1 . . B 3.0 0.0 0.0 B
+#
+""",
+        encoding="utf-8",
+    )
+
+    quality = assess_boltz_structure(structure, pocket_residues=[1, 2])
+
+    assert quality.pocket_constraint_fraction == pytest.approx(0.5)
+    assert quality.severe_clash is False
+    quality_path = write_boltz_quality(structure, pocket_residues=[1, 2])
+    assert quality_path.name == "airti_quality.json"
+    assert quality_path.is_file()
+
+
+def test_boltz_runner_locates_official_result_directory(job: BoltzJob) -> None:
+    def executor(command: list[str], timeout_seconds: int) -> BoltzExecutionResult:
+        assert timeout_seconds == 7200
+        output_dir = Path(command[command.index("--out_dir") + 1])
+        result_root = output_dir / f"boltz_results_{job.input_yaml.stem}"
+        shutil.copytree("tests/fixtures/boltz2_output/predictions", result_root / "predictions")
+        source = result_root / "predictions/job1"
+        destination = result_root / "predictions" / job.input_yaml.stem
+        source.rename(destination)
+        for path in destination.iterdir():
+            path.rename(path.with_name(path.name.replace("job1", job.input_yaml.stem)))
+        return BoltzExecutionResult(
+            return_code=0,
+            stdout="Number of failed examples: 0",
+            stderr="",
+            timed_out=False,
+        )
+
+    result = run_boltz_seed(job, seed=11, executor=executor)
+
+    assert result.status == "succeeded"
+    assert result.confidence_score == pytest.approx(0.81)
+    assert result.structure_path is not None
+    assert result.structure_path.is_file()
+    assert (job.output_dir / "boltz.stdout.log").read_text() == (
+        "Number of failed examples: 0"
+    )
+    assert (job.output_dir / "boltz.stderr.log").read_text() == ""
+    assert (job.output_dir / "boltz.execution.json").is_file()

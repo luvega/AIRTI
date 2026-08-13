@@ -5,19 +5,23 @@ process LIGAND_PREP {
     path queries
 
     output:
-    path 'prepared.smi', emit: prepared
+    tuple path('prepared_ligands.jsonl'), path('prepared_ligands'), emit: prepared
 
     script:
     if (params.mock_tools) {
         """
-        cp ${queries} prepared.smi
-        count=\$(grep -cv '^[[:space:]]*\$' prepared.smi)
+        mkdir -p prepared_ligands
+        cp ${queries} prepared_ligands.jsonl
+        count=\$(grep -cv '^[[:space:]]*\$' prepared_ligands.jsonl)
         test "\$count" -ge 1
         test "\$count" -le 5
         """
     } else {
         """
-        airti-tf prepare-ligands ${queries} --output prepared.smi --max-molecules 5
+        airti-tf prepare-ligands ${queries} \
+          --output prepared_ligands.jsonl \
+          --asset-dir prepared_ligands \
+          --max-molecules 5
         """
     }
 }

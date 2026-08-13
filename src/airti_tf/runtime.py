@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import resource
@@ -14,13 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Profile = Literal["local", "production"]
 
-REQUIRED_IMAGES = (
-    "airti-targetlib-cpu",
-    "airti-screening-cpu",
-    "airti-boltz2-gpu",
-    "airti-gromacs-gpu",
-    "airti-orchestrator",
-)
+REQUIRED_IMAGES = ("airti-tf:0.1.0-gpu",)
 
 
 class MutableModel(BaseModel):
@@ -188,6 +183,25 @@ def _reference_manifest_status(path: Path) -> Literal["valid", "missing", "inval
         return "invalid"
     if not isinstance(payload, dict) or not isinstance(payload.get("artifacts"), list):
         return "invalid"
+    if payload.get("taxonomy_id") != 9606 or payload.get("proteome_id") != "UP000005640":
+        return "invalid"
+    for artifact in payload["artifacts"]:
+        if not isinstance(artifact, dict):
+            return "invalid"
+        relative = artifact.get("path")
+        expected = artifact.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            return "invalid"
+        artifact_path = (path.parent / relative).resolve()
+        try:
+            artifact_path.relative_to(path.parent.resolve())
+        except ValueError:
+            return "invalid"
+        if not artifact_path.is_file():
+            return "invalid"
+        observed = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        if observed != expected:
+            return "invalid"
     return "valid"
 
 
@@ -205,6 +219,7 @@ def collect_host_facts(*, deep: bool) -> HostFacts:
     versions: dict[str, str] = {}
     nvidia_runtime = False
     gpus: list[GPUFact] = []
+    images: dict[str, ImageFact] = {}
 
     if nextflow_available:
         process = _run(["nextflow", "-version"])
@@ -215,6 +230,22 @@ def collect_host_facts(*, deep: bool) -> HostFacts:
         versions["docker_compose"] = compose.stdout.strip()
         info = _run(["docker", "info", "--format", "{{json .Runtimes}}"])
         nvidia_runtime = info.returncode == 0 and '"nvidia"' in info.stdout
+        if deep:
+            for image in REQUIRED_IMAGES:
+                inspect = _run(
+                    ["docker", "image", "inspect", image, "--format", "{{.Id}}"]
+                )
+                if inspect.returncode != 0:
+                    continue
+                digest = inspect.stdout.strip()
+                smoke = _run(
+                    ["docker", "run", "--rm", image, "airti-tf", "version"],
+                    timeout=120,
+                )
+                images[image] = ImageFact(
+                    command_ok=smoke.returncode == 0,
+                    digest=digest if digest.startswith("sha256:") else None,
+                )
 
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi is not None:
@@ -240,10 +271,13 @@ def collect_host_facts(*, deep: bool) -> HostFacts:
                 "--rm",
                 "--gpus",
                 "all",
-                "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
+                REQUIRED_IMAGES[0],
                 "python",
                 "-c",
-                "import torch; print((torch.ones(1, device='cuda') + 1).item())",
+                (
+                    "import torch; assert torch.cuda.is_available(); "
+                    "print(torch.cuda.get_device_name(0))"
+                ),
             ],
             timeout=120,
         )
@@ -259,7 +293,7 @@ def collect_host_facts(*, deep: bool) -> HostFacts:
         versions=versions,
         nvidia_runtime=nvidia_runtime,
         gpus=gpus,
-        images={},
+        images=images,
         reference_manifest_status=_reference_manifest_status(
             data_root / "reference" / "reference_manifest.json"
         ),
