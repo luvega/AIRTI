@@ -1,0 +1,14 @@
+.git
+.worktrees
+.venv
+.tools
+.tmp
+.pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
+*.pyc
+work
+results
+data/runtime
+ai-reverse-target-fishing/searches

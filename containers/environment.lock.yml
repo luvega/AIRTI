@@ -1,0 +1,23 @@
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11.13
+  - pip=25.1.1
+  - ambertools=24.8
+  - parmed=4.3.1
+  - gromacs=2025.4=nompi_cuda_h39c90b0_0
+  - fpocket=4.2.3
+  - qvina=2.1.0
+  - vina=1.2.7
+  - meeko=0.7.1
+  - rdkit=2025.03.5
+  - dimorphite-dl=2.0.2
+  - biopython=1.85
+  - numpy=1.26.4
+  - pandas=2.3.1
+  - scipy=1.13.1
+  - pydantic=2.11.7
+  - pydantic-settings=2.10.1
+  - typer=0.16.0
+  - jinja2=3.1.6
+  - pyyaml=6.0.2

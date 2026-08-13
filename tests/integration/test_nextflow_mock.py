@@ -1,3 +1,5 @@
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +15,18 @@ REQUIRED_MODULES = {
     "md.nf": "MD",
     "report.nf": "REPORT",
 }
+NEXTFLOW = shutil.which("nextflow") or (
+    str(Path(".tools/nextflow").resolve())
+    if Path(".tools/nextflow").is_file()
+    else None
+)
+NEXTFLOW_ENV = {
+    **os.environ,
+    "JAVA_HOME": str(Path(".tools/nextflow-env").resolve()),
+    "NXF_HOME": str(Path(".tools/nextflow-home").resolve()),
+    "NXF_VER": "24.10.4",
+    "NXF_OFFLINE": "true",
+}
 
 
 def test_workflow_declares_all_stage_modules() -> None:
@@ -25,10 +39,10 @@ def test_workflow_declares_all_stage_modules() -> None:
         assert process_name in source
 
 
-@pytest.mark.skipif(shutil.which("nextflow") is None, reason="Nextflow not installed")
+@pytest.mark.skipif(NEXTFLOW is None, reason="Nextflow not installed")
 def test_mock_workflow_reaches_report_and_resumes(tmp_path: Path) -> None:
     command = [
-        "nextflow",
+        str(NEXTFLOW),
         "run",
         "workflow/main.nf",
         "-profile",
@@ -40,14 +54,25 @@ def test_mock_workflow_reaches_report_and_resumes(tmp_path: Path) -> None:
         "-work-dir",
         str(tmp_path / "work"),
     ]
-    first = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    first = subprocess.run(
+        command, capture_output=True, text=True, timeout=120, env=NEXTFLOW_ENV
+    )
     second = subprocess.run(
-        [*command, "-resume"], capture_output=True, text=True, timeout=120
+        [*command, "-resume"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=NEXTFLOW_ENV,
     )
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     assert (tmp_path / "delivery/final_report/report.md").exists()
+    manifest = json.loads(
+        (tmp_path / "delivery/final_report/report_manifest.json").read_text()
+    )
+    assert manifest["query_count"] == 2
+    assert manifest["technical_success_rate"] == 1.0
+    assert len(manifest["queries"]) == 2
     assert (tmp_path / "delivery/job_status.sqlite").exists()
     assert "cached:" in second.stdout.lower()
-

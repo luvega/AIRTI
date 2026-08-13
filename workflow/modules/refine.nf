@@ -10,7 +10,22 @@ process REFINE {
     script:
     if (params.mock_tools) {
         """
-        printf '%s\n' '{"ligand_id":"query-1","target_id":"P00533","boltz_score":0.86,"rank":1}' > boltz_top30.jsonl
+        python - ${screened} <<'PY'
+        import json
+        import pathlib
+        import sys
+
+        rows = []
+        for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+            if line.strip():
+                row = json.loads(line)
+                row.update({"boltz_score": 0.86, "mock_only": True})
+                rows.append(row)
+        pathlib.Path('boltz_top30.jsonl').write_text(
+            ''.join(json.dumps(row, sort_keys=True) + '\\n' for row in rows),
+            encoding='utf-8',
+        )
+        PY
         """
     } else {
         """
@@ -18,4 +33,3 @@ process REFINE {
         """
     }
 }
-

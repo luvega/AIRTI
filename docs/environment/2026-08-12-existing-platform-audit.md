@@ -1,13 +1,13 @@
 # AIRTI 反向钓靶现有计算平台审计
 
 **日期**：2026-08-12  
-**结论**：现有蛋白质/多肽设计平台的 GPU、Docker、CPU、内存和大容量数据盘可直接复用；反向钓靶特有的软件栈尚未安装，需要新增 AIRTI 专用镜像和编排模块。
+**结论**：现有蛋白质/多肽设计平台的 GPU、Docker、CPU、内存和大容量数据盘可直接复用。反向钓靶特有的软件栈已于 2026-08-13 封装为 AIRTI 统一镜像，并通过三条真实工具链 smoke；全人蛋白组参考库与检索基准仍需完成后方可进入生产任务。
 
 ## 1. 已验证基础设施
 
 | 项目 | 实测结果 | AIRTI 用途 |
 |---|---|---|
-| GPU | NVIDIA GeForce RTX 4090，49140 MiB；Driver 590.48.01；CUDA 13.1 | Boltz-2 与 GROMACS GPU 任务 |
+| GPU | NVIDIA GeForce RTX 4090；容器可见 48507 MiB；Torch CUDA 12.8 | Boltz-2 与 GROMACS GPU 任务 |
 | GPU 容器 | Docker NVIDIA runtime 已注册 | 复用既有容器运行方式 |
 | JAX GPU | 既有 AF3 smoke 返回 `devices [CudaDevice(id=0)]` | 证明容器到 GPU 的计算路径可用 |
 | CPU | Intel Xeon Platinum 8347C，72 logical CPUs | 建库、口袋发现、QuickVina2 并行筛选 |
@@ -47,29 +47,24 @@ AIRTI 应复用这些工程约定，而不是修改或复制既有模型资产�
 
 1. 轻量代码进入 AIRTI Git 仓库；
 2. 模型、数据库和大结果留在仓库外；
-3. 每个科学工具使用独立镜像；
+3. AIRTI 科学工具使用一个固定版本统一镜像，模型与大数据外置；
 4. 输入、输出、模型和缓存使用显式只读/读写挂载；
-5. 每个镜像提供快速 smoke，再开放完整计算开关；
+5. 统一镜像提供命令合同与三引擎真实 smoke，再开放完整计算开关；
 6. 运行日志、参数、镜像 digest 和结果哈希进入审计清单。
 
-## 3. 尚未具备的 AIRTI 专用工具
+## 3. AIRTI 统一镜像
 
-在宿主 PATH、`pd-benchmark-methods-gpu:0.21` 和 `pd-pyrosetta-methods-gpu:0.21` 的检查中，以下命令均未发现：
+宿主和既有设计镜像不直接安装反向钓靶工具。AIRTI 使用 `airti-tf:0.1.0-gpu` 统一提供：
 
-- `boltz`；
-- `gmx` / `gmx_mpi`；
-- `qvina2`；
-- `vina`；
-- `fpocket`；
-- `mk_prepare_receptor.py`。
+- Boltz 2.2.1 与 Torch 2.7.1+cu128；
+- GROMACS 2025.4 CUDA 构建、AmberTools 24.8 和 ParmEd 4.3.1；
+- QuickVina2 2.1.0 与 AutoDock Vina 1.2.7；
+- fpocket 4.2.3 与 Meeko 0.7.1；
+- AIRTI Python 包 0.1.0。
 
-因此，现有 AF2/AF3/多肽设计镜像不能直接充当反向钓靶生产镜像。首版需要新增：
+选择单镜像是针对当前单节点、单 GPU 和串行 GPU 阶段做出的部署决策。其优势是 Nextflow 各阶段共享同一可审计环境，减少镜像间版本漂移；代价是本地镜像约 16.8 GB。Boltz 模型与 CCD 缓存约 7.6 GB，保留在 `/mnt/ssd4t/airti-target-fishing/boltz`，不随镜像复制。
 
-- `airti-targetlib-cpu`：UniProt、结构处理、fpocket、Meeko；
-- `airti-screening-cpu`：QuickVina2、AutoDock Vina、RDKit；
-- `airti-boltz2-gpu`：Boltz-2 与模型缓存挂载；
-- `airti-gromacs-gpu`：GROMACS CUDA、Amber ff19SB、GAFF2 参数化接口；
-- `airti-orchestrator`：Python 包、Nextflow 与报告工具。
+最终本地内容标识、模型哈希与 SPDX SBOM 分别记录在 `containers/images.lock.yaml`、`containers/models.lock.yaml` 和 `docs/sbom/`。本地内容标识不是注册表 RepoDigest；推送 OCI 注册表后仍需记录远端不可变 digest。
 
 ## 4. 修订后的部署判断
 
@@ -82,4 +77,4 @@ AIRTI 应复用这些工程约定，而不是修改或复制既有模型资产�
 - 源码、测试和轻量清单保留在 `/home/a/Data/AIRTI`；
 - 未来增加 GPU 节点时再启用 SLURM/Apptainer profile，不影响数据契约。
 
-当前环境已通过 GPU、Docker、CPU、内存和容量可行性检查；仍需通过 AIRTI 五个专用镜像、Nextflow、参考库完整性和端到端 smoke 门，才可启动全人蛋白组生产任务。
+当前环境已通过 GPU、Docker、CPU、内存、容量、统一镜像命令合同和三引擎真实 smoke。启动全人蛋白组生产任务前仍需通过参考库完整性、背景校准库、10 例端到端检索和发布阈值门；现阶段结果不得表述为已完成全蛋白组验证。

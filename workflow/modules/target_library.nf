@@ -7,7 +7,10 @@ process TARGET_LIBRARY {
     script:
     if (params.mock_tools) {
         """
-        printf '%s\n' '{"target_id":"P00533","status":"ready","input_sha256":"mock"}' > targets.jsonl
+        printf '%s\n' \
+          '{"target_id":"P00533","status":"ready","input_sha256":"mock-ready"}' \
+          '{"target_id":"P0UNSP","status":"unsupported","unsupported_reason":"no_structure","input_sha256":"mock-unsupported"}' \
+          > targets.jsonl
         """
     } else {
         """
@@ -16,4 +19,3 @@ process TARGET_LIBRARY {
         """
     }
 }
-

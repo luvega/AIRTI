@@ -1,0 +1,5 @@
+REMARK  AIRTI single-carbon binary smoke ligand
+ROOT
+HETATM    1  C1  LIG B   1       0.000   0.000   0.000  1.00  0.00     0.000 C
+ENDROOT
+TORSDOF 0
