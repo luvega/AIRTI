@@ -91,6 +91,9 @@ def test_non_root_scientific_caches_are_redirected_to_writable_runtime_paths() -
     assert "MPLCONFIGDIR=/tmp/airti-cache/matplotlib" in dockerfile
     assert "XDG_CACHE_HOME=/tmp/airti-cache/xdg" in dockerfile
     assert "TRITON_CACHE_DIR=/tmp/airti-cache/triton" in dockerfile
+    assert "mkdir -p /tmp/airti-cache/numba" in dockerfile
+    assert "chmod 1777 /tmp/airti-cache" in dockerfile
+    assert "USER $MAMBA_USER" in dockerfile
 
 
 def test_lockfile_declares_one_image_and_all_scientific_versions() -> None:

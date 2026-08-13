@@ -18,6 +18,18 @@ ENV PATH=/opt/conda/bin:${PATH} \
     TRITON_CACHE_DIR=/tmp/airti-cache/triton \
     PYTHONUNBUFFERED=1
 
+USER root
+RUN mkdir -p /tmp/airti-cache/numba \
+        /tmp/airti-cache/matplotlib \
+        /tmp/airti-cache/xdg \
+        /tmp/airti-cache/triton \
+    && chmod 1777 /tmp/airti-cache \
+        /tmp/airti-cache/numba \
+        /tmp/airti-cache/matplotlib \
+        /tmp/airti-cache/xdg \
+        /tmp/airti-cache/triton
+USER $MAMBA_USER
+
 COPY --chown=$MAMBA_USER:$MAMBA_USER containers/environment.lock.yml /tmp/environment.lock.yml
 RUN micromamba install --yes --name base --file /tmp/environment.lock.yml \
     && micromamba clean --all --yes
