@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import subprocess
@@ -125,6 +126,41 @@ def test_lockfile_declares_one_image_and_all_scientific_versions() -> None:
     assert digest.startswith("sha256:")
     assert Path(lock["images"]["production"]["sbom"]).is_file()
     assert lock["images"]["production"]["smoke_status"] == "passed"
+
+
+def test_locked_sbom_hash_matches_the_versioned_artifact() -> None:
+    lock = yaml.safe_load(Path("containers/images.lock.yaml").read_text())
+    production = lock["images"]["production"]
+    sbom = Path(production["sbom"])
+
+    assert hashlib.sha256(sbom.read_bytes()).hexdigest() == production["sbom_sha256"]
+
+
+@pytest.mark.skipif(not docker_available(), reason="Docker daemon unavailable")
+def test_local_production_image_matches_the_content_and_revision_lock() -> None:
+    if not image_exists(PRODUCTION_IMAGE):
+        pytest.skip(f"image not built: {PRODUCTION_IMAGE}")
+    lock = yaml.safe_load(Path("containers/images.lock.yaml").read_text())
+    production = lock["images"]["production"]
+    result = subprocess.run(
+        [
+            "docker",
+            "image",
+            "inspect",
+            PRODUCTION_IMAGE,
+            "--format",
+            '{{.Id}} {{.Size}} {{index .Config.Labels "org.opencontainers.image.revision"}}',
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=20,
+    )
+    digest, size, revision = result.stdout.split()
+
+    assert digest == production["digest"]
+    assert int(size) == production["size_bytes"]
+    assert revision == production["source_revision"]
 
 
 def test_real_hardware_smoke_inputs_are_versioned() -> None:
