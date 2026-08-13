@@ -1,8 +1,18 @@
 # AIRTI Target Fishing
 
+<p align="center">
+  <img src="docs/assets/airti-icon.png" width="220" alt="AIRTI 反向钓靶项目图标">
+</p>
+
+<p align="center"><em>图注：中央发光小分子进入抽象蛋白结合口袋，外围神经网络节点和环形粒子轨迹分别表示 AI 复合物精评与分子动力学复核；图形表达计算候选生成，不表示实验靶点确认。</em></p>
+
 AIRTI Target Fishing 是面向 1–5 个小分子的全人蛋白组反向钓靶内部计算流水线。首版主链为结构与口袋质控、QuickVina2 背景校准初筛、Boltz-2 精评、GROMACS 100 ns 分子动力学和分阶段共识排序。
 
 项目只输出候选优先级与可追溯计算证据，不把纯计算结果表述为实验确认的直接靶点。
+
+![AIRTI 全人蛋白组反向钓靶流程示意图](docs/assets/airti-workflow.png)
+
+> 图注：图中从左到右表示 1–5 个查询小分子进入人源 canonical 蛋白结构与口袋库，依次经过背景校准的多种子批量对接、Boltz-2 多种子复合物精评和 GROMACS 分子动力学复核，最终形成少量可追溯候选，并转交独立湿实验验证。该图是目标生产流程示意，不表示全人蛋白组 ready 覆盖、100 ns MD 或湿实验靶点确认已经完成；当前通过范围以“当前阶段”和验证报告为准。
 
 ## 当前阶段
 
