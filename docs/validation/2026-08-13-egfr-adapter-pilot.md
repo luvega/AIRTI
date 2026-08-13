@@ -70,11 +70,11 @@
 | 项目 | 记录 |
 |---|---|
 | 镜像 | `airti-tf:0.1.0-gpu` |
-| 镜像内容标识 | `sha256:c8085c3ff5bd1080aaa4b4d291a0112fb2612d09969f7d982ebf30eda74520a9` |
-| AIRTI 源码提交 | `aa357690fc3db65aac26e5940246584b7804fd6b` |
+| 镜像内容标识 | `sha256:97b8f44286f4457e1630ce7c21dda5ef7b6692fcfbf209c8142dd43999c77de8` |
+| AIRTI 源码提交 | `dc13f2771b81bb0290f6f5a7d51f64045efe36c2` |
 | 镜像大小 | 16,815,059,528 bytes |
-| SBOM SHA-256 | `f619f87fc643454dee4e7767aef924e4cdb12605f2b810ccffae769afd251948` |
-| 硬件 smoke | `/data/airti-target-fishing/runs/IMAGE-SMOKE-20260813-AA35769`；通过 |
+| SBOM SHA-256 | `298b79434ed94e035f7959429957e6e72abadaefd390719a65bcafc4f441069a` |
+| 硬件 smoke | `/data/airti-target-fishing/runs/IMAGE-SMOKE-20260813-DC13F27`；通过 |
 
 ## 6. 当前判断与下一门禁
 
