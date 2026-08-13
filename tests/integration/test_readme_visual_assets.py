@@ -40,3 +40,6 @@ def test_readme_references_visual_assets_with_alt_text_and_captions() -> None:
         "不表示全人蛋白组 ready 覆盖、100 ns MD 或湿实验靶点确认已经完成"
         in readme
     )
+    assert "中央小分子进入开放蛋白结合口袋" in readme
+    assert "外围节点网络和弧形轨迹" in readme
+    assert "中央发光小分子" not in readme
