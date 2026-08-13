@@ -23,12 +23,21 @@ def test_builds_canonical_manifest() -> None:
     assert records[0].isoform_aliases == ["P00533-2"]
 
 
-def test_reference_proteome_query_does_not_filter_unreviewed() -> None:
+def test_production_query_is_reviewed_human_reference_proteome() -> None:
     url = build_uniprot_url(proteome="UP000005640")
 
     assert "proteome%3AUP000005640" in url
-    assert "reviewed%3Atrue" not in url
-    assert "organism_id" in url
+    assert "reviewed%3Atrue" in url
+    assert "organism_id%3A9606" in url
+
+
+def test_unreviewed_only_entries_are_excluded_from_production_snapshot() -> None:
+    records = parse_uniprot_tsv(
+        Path("tests/fixtures/uniprot_human_sample.tsv"), release="2026_03"
+    )
+
+    assert all(record.reviewed for record in records)
+    assert "QUNREV" not in {record.uniprot_id for record in records}
 
 
 def test_snapshot_is_versioned_and_summarized(tmp_path: Path) -> None:

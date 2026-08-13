@@ -40,6 +40,7 @@ class CoverageContext(BaseModel):
     total: int = Field(ge=0)
     ready: int = Field(ge=0)
     unsupported: int = Field(ge=0)
+    failed: int = Field(default=0, ge=0)
     artifact_id: str
 
 
@@ -47,6 +48,7 @@ class TargetContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rank: int = Field(gt=0)
+    query_id: str | None = None
     target_id: str
     gene_symbol: str
     priority: float = Field(ge=0, le=1)
@@ -195,4 +197,3 @@ def write_report_delivery(
         manifest_path=manifest_path,
         report_sha256=report_sha256,
     )
-

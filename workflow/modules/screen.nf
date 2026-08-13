@@ -2,16 +2,17 @@ process SCREEN {
     label 'cpu_screen'
 
     input:
-    path ligands
-    path targets
+    tuple path(ligand_manifest), path(ligand_assets)
+    tuple path(target_manifest), path(target_assets)
 
     output:
-    path 'calibrated_top300.jsonl', emit: calibrated
+    tuple path('screened_candidates.jsonl'), path('screen_assets'), emit: calibrated
 
     script:
     if (params.mock_tools) {
         """
-        python - ${ligands} <<'PY'
+        mkdir -p screen_assets
+        python - ${ligand_manifest} <<'PY'
         import json
         import pathlib
         import sys
@@ -29,7 +30,7 @@ process SCREEN {
                 "rank": 1,
                 "mock_only": True,
             })
-        pathlib.Path('calibrated_top300.jsonl').write_text(
+        pathlib.Path('screened_candidates.jsonl').write_text(
             ''.join(json.dumps(row, sort_keys=True) + '\\n' for row in rows),
             encoding='utf-8',
         )
@@ -37,7 +38,11 @@ process SCREEN {
         """
     } else {
         """
-        airti-tf screen --ligands ${ligands} --targets ${targets} --output calibrated_top300.jsonl
+        airti-tf screen \
+          --ligands ${ligand_manifest} \
+          --targets ${target_manifest} \
+          --output screened_candidates.jsonl \
+          --asset-dir screen_assets
         """
     }
 }

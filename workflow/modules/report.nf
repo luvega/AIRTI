@@ -3,7 +3,7 @@ process REPORT {
     publishDir params.outdir, mode: 'copy', overwrite: true
 
     input:
-    path simulated
+    tuple path(md_manifest), path(md_assets)
 
     output:
     path 'final_report', emit: report_dir
@@ -13,7 +13,7 @@ process REPORT {
     if (params.mock_tools) {
         """
         mkdir -p final_report
-        python - ${simulated} <<'PY'
+        python - ${md_manifest} <<'PY'
         import json
         import pathlib
         import sqlite3
@@ -66,7 +66,10 @@ process REPORT {
         """
     } else {
         """
-        airti-tf render-report --candidates ${simulated} --output final_report --state-db job_status.sqlite
+        airti-tf render-report \
+          --candidates ${md_manifest} \
+          --output final_report \
+          --state-db job_status.sqlite
         """
     }
 }

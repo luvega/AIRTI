@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "validation_scope": "single-target-real-adapter-pilot",
+  "query_id": "erlotinib",
+  "expected_direct_human_target": "P00533",
+  "expected_gene_symbol": "EGFR",
+  "pubchem_cid": 176870,
+  "source_url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/erlotinib/property/CanonicalSMILES,IsomericSMILES/JSON",
+  "retrieved_at": "2026-08-13",
+  "limitations": [
+    "This fixture validates real stage adapters against a one-ready-target pilot library.",
+    "It does not estimate retrieval quality across the complete human proteome."
+  ]
+}

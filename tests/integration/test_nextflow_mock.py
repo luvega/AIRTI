@@ -39,6 +39,38 @@ def test_workflow_declares_all_stage_modules() -> None:
         assert process_name in source
 
 
+def test_production_modules_pass_manifests_with_their_asset_directories() -> None:
+    ligand = Path("workflow/modules/ligand_prep.nf").read_text(encoding="utf-8")
+    screen = Path("workflow/modules/screen.nf").read_text(encoding="utf-8")
+    refine = Path("workflow/modules/refine.nf").read_text(encoding="utf-8")
+    md = Path("workflow/modules/md.nf").read_text(encoding="utf-8")
+    report = Path("workflow/modules/report.nf").read_text(encoding="utf-8")
+
+    assert "prepared_ligands.jsonl" in ligand
+    assert "--asset-dir prepared_ligands" in ligand
+    assert "tuple path('prepared_ligands.jsonl'), path('prepared_ligands')" in ligand
+    assert "--asset-dir screen_assets" in screen
+    assert "tuple path('screened_candidates.jsonl'), path('screen_assets')" in screen
+    assert "--asset-dir boltz_assets" in refine
+    assert "tuple path('boltz_candidates.jsonl'), path('boltz_assets')" in refine
+    assert "--asset-dir md_assets" in md
+    assert "tuple path('md_candidates.jsonl'), path('md_assets')" in md
+    assert "--candidates ${md_manifest}" in report
+    assert "--resume" not in md
+
+
+def test_production_reference_defaults_use_the_documented_data_root() -> None:
+    config = Path("workflow/nextflow.config").read_text(encoding="utf-8")
+
+    assert (
+        "target_manifest = "
+        "'/data/airti-target-fishing/reference/human_canonical_targets.jsonl'"
+        in config
+    )
+    assert "target_assets = '/data/airti-target-fishing/reference/targets'" in config
+    assert "/data/airti/reference/" not in config
+
+
 @pytest.mark.skipif(NEXTFLOW is None, reason="Nextflow not installed")
 def test_mock_workflow_reaches_report_and_resumes(tmp_path: Path) -> None:
     command = [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import resource
@@ -182,6 +183,25 @@ def _reference_manifest_status(path: Path) -> Literal["valid", "missing", "inval
         return "invalid"
     if not isinstance(payload, dict) or not isinstance(payload.get("artifacts"), list):
         return "invalid"
+    if payload.get("taxonomy_id") != 9606 or payload.get("proteome_id") != "UP000005640":
+        return "invalid"
+    for artifact in payload["artifacts"]:
+        if not isinstance(artifact, dict):
+            return "invalid"
+        relative = artifact.get("path")
+        expected = artifact.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            return "invalid"
+        artifact_path = (path.parent / relative).resolve()
+        try:
+            artifact_path.relative_to(path.parent.resolve())
+        except ValueError:
+            return "invalid"
+        if not artifact_path.is_file():
+            return "invalid"
+        observed = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        if observed != expected:
+            return "invalid"
     return "valid"
 
 

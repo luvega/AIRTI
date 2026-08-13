@@ -56,7 +56,9 @@ def build_uniprot_url(*, proteome: str) -> str:
         "compressed": "true",
         "format": "tsv",
         "fields": "accession,reviewed,gene_primary,organism_id,sequence",
-        "query": f"proteome:{proteome}",
+        "query": (
+            f"(proteome:{proteome}) AND (organism_id:9606) AND (reviewed:true)"
+        ),
     }
     return f"{UNIPROT_STREAM_URL}?{urlencode(parameters)}"
 
@@ -74,6 +76,9 @@ def parse_uniprot_tsv(path: Path, *, release: str) -> list[UniProtRecord]:
             accession = row["Entry"].strip()
             if not accession or int(row["Organism (ID)"]) != 9606:
                 continue
+            reviewed = row["Reviewed"].strip().lower() == "reviewed"
+            if not reviewed:
+                continue
             if "-" in accession:
                 base_accession = accession.split("-", maxsplit=1)[0]
                 aliases.setdefault(base_accession, set()).add(accession)
@@ -81,7 +86,6 @@ def parse_uniprot_tsv(path: Path, *, release: str) -> list[UniProtRecord]:
             sequence = "".join(row["Sequence"].split()).upper()
             if not sequence.isalpha() or not sequence.isascii():
                 raise ValueError(f"invalid sequence alphabet for {accession}")
-            reviewed = row["Reviewed"].strip().lower() == "reviewed"
             record = UniProtRecord(
                 uniprot_id=accession,
                 gene_primary=(row.get("Gene Names (primary)") or "").strip() or None,
