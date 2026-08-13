@@ -96,6 +96,16 @@ def test_non_root_scientific_caches_are_redirected_to_writable_runtime_paths() -
     assert "USER $MAMBA_USER" in dockerfile
 
 
+def test_unified_image_declares_the_airti_source_revision() -> None:
+    dockerfile = Path("containers/airti.Dockerfile").read_text(encoding="utf-8")
+    smoke_script = Path("scripts/run_hardware_smoke.sh").read_text(encoding="utf-8")
+
+    assert "ARG AIRTI_REVISION=unknown" in dockerfile
+    assert "org.opencontainers.image.revision=${AIRTI_REVISION}" in dockerfile
+    assert "image-revision.txt" in smoke_script
+    assert "org.opencontainers.image.revision" in smoke_script
+
+
 def test_lockfile_declares_one_image_and_all_scientific_versions() -> None:
     lock = yaml.safe_load(Path("containers/images.lock.yaml").read_text())
 

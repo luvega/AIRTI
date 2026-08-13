@@ -21,6 +21,15 @@ mkdir -p "${RUN_ROOT}/docking" "${RUN_ROOT}/gromacs" "${RUN_ROOT}/boltz"
 mkdir -p "${CACHE_ROOT}"
 
 docker image inspect "${IMAGE}" --format '{{.Id}}' > "${RUN_ROOT}/image-digest.txt"
+IMAGE_REVISION="$(
+    docker image inspect "${IMAGE}" \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+)"
+if [[ ! "${IMAGE_REVISION}" =~ ^[0-9a-f]{7,64}$ ]]; then
+    echo "Image has no valid AIRTI source revision label: ${IMAGE_REVISION}" >&2
+    exit 65
+fi
+printf '%s\n' "${IMAGE_REVISION}" > "${RUN_ROOT}/image-revision.txt"
 
 docker run --rm \
     --user "${HOST_USER}" \

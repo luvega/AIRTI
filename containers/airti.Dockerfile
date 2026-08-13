@@ -51,5 +51,7 @@ RUN /opt/conda/bin/python -m pip install --no-cache-dir --no-deps . \
     && /opt/conda/bin/python -m pip check
 
 WORKDIR /work
+ARG AIRTI_REVISION=unknown
+LABEL org.opencontainers.image.revision=${AIRTI_REVISION}
 ENTRYPOINT []
 CMD ["airti-tf", "--help"]
