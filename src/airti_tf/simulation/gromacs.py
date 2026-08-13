@@ -306,7 +306,12 @@ def _mdp_text(settings: dict[str, str | int | float]) -> str:
     return "".join(f"{key} = {value}\n" for key, value in settings.items())
 
 
-def render_system_inputs(run_dir: Path, *, velocity_seed: int) -> None:
+def render_system_inputs(
+    run_dir: Path,
+    *,
+    velocity_seed: int,
+    ligand_formal_charge: int = 0,
+) -> None:
     """Write the frozen ff19SB/GAFF2/TIP3P build and equilibration inputs."""
     if not 1 <= velocity_seed <= 2_147_483_647:
         raise ValueError("velocity seed must be a positive signed 32-bit integer")
@@ -328,18 +333,60 @@ saveAmberParm COM solvated.prmtop solvated.inpcrd
 savePdb COM solvated.pdb
 quit
 """
-    parmed_script = """from pathlib import Path
+    parmed_script = """import json
+from pathlib import Path
 
 import parmed as pmd
 
 root = Path(__file__).resolve().parent
+ligand_formal_charge = __LIGAND_FORMAL_CHARGE__
 system = pmd.load_file(
     str(root / "solvated.prmtop"),
     xyz=str(root / "solvated.inpcrd"),
 )
+ligand_residues = [residue for residue in system.residues if residue.name == "MOL"]
+if len(ligand_residues) != 1:
+    raise ValueError("expected exactly one MOL ligand residue")
+ligand_atoms = list(ligand_residues[0].atoms)
+observed_charge = sum(float(atom.charge) for atom in ligand_atoms)
+charge_correction = ligand_formal_charge - observed_charge
+if abs(charge_correction) > 0.05:
+    raise ValueError(
+        "ligand charge residual exceeds the 0.05 e normalization limit: "
+        f"{charge_correction:.8f}"
+    )
+per_atom_correction = charge_correction / len(ligand_atoms)
+for atom in ligand_atoms:
+    atom.charge += per_atom_correction
+for residue in system.residues:
+    original_name = residue.name
+    if original_name not in {"Na+", "Cl-"}:
+        continue
+    normalized_name = {"Na+": "NA", "Cl-": "CL"}[original_name]
+    residue.name = normalized_name
+    for atom in residue.atoms:
+        atom.name = normalized_name
+(root / "charge_normalization.json").write_text(
+    json.dumps(
+        {
+            "atom_count": len(ligand_atoms),
+            "correction_e": charge_correction,
+            "observed_charge_e": observed_charge,
+            "per_atom_correction_e": per_atom_correction,
+            "target_formal_charge_e": ligand_formal_charge,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    + "\\n",
+    encoding="utf-8",
+)
 system.save(str(root / "topol.top"), format="gromacs", overwrite=True)
 system.save(str(root / "solvated.gro"), format="gro", overwrite=True)
 """
+    parmed_script = parmed_script.replace(
+        "__LIGAND_FORMAL_CHARGE__", str(ligand_formal_charge)
+    )
     water_index_script = """from pathlib import Path
 
 root = Path(__file__).resolve().parent
@@ -551,9 +598,9 @@ def build_system_commands(
             "-o",
             str(run_dir / "ions.gro"),
             "-pname",
-            "Na+",
+            "NA",
             "-nname",
-            "Cl-",
+            "CL",
             "-conc",
             "0.15",
             "-neutral",
@@ -645,7 +692,11 @@ def build_md_system(
             ligand_formal_charge=ligand_formal_charge,
             output_sdf=run_dir / "ligand.sdf",
         )
-        render_system_inputs(run_dir, velocity_seed=velocity_seed)
+        render_system_inputs(
+            run_dir,
+            velocity_seed=velocity_seed,
+            ligand_formal_charge=ligand_formal_charge,
+        )
     except (OSError, RuntimeError, ValueError) as error:
         result = MDSystemBuildResult(
             status="failed",
@@ -669,7 +720,7 @@ def build_md_system(
         (
             "convert_topology",
             "topology_conversion_failed",
-            ("topol.top", "solvated.gro"),
+            ("topol.top", "solvated.gro", "charge_normalization.json"),
         ),
         ("prepare_ions", "ionization_failed", ("ions.tpr",)),
         ("index_water", "ionization_failed", ("water.ndx",)),

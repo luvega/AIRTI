@@ -84,6 +84,15 @@ def test_runtime_bypasses_broken_gromacs_activation_hook() -> None:
     assert "ENTRYPOINT []" in dockerfile
 
 
+def test_non_root_scientific_caches_are_redirected_to_writable_runtime_paths() -> None:
+    dockerfile = Path("containers/airti.Dockerfile").read_text(encoding="utf-8")
+
+    assert "NUMBA_CACHE_DIR=/tmp/airti-cache/numba" in dockerfile
+    assert "MPLCONFIGDIR=/tmp/airti-cache/matplotlib" in dockerfile
+    assert "XDG_CACHE_HOME=/tmp/airti-cache/xdg" in dockerfile
+    assert "TRITON_CACHE_DIR=/tmp/airti-cache/triton" in dockerfile
+
+
 def test_lockfile_declares_one_image_and_all_scientific_versions() -> None:
     lock = yaml.safe_load(Path("containers/images.lock.yaml").read_text())
 

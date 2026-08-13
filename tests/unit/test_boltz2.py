@@ -149,6 +149,16 @@ def test_failure_classification(stderr: str, expected: str) -> None:
     assert classify_boltz_failure(stderr) == expected
 
 
+def test_numba_cache_trace_is_not_misclassified_as_missing_msa() -> None:
+    stderr = (
+        "File '/opt/conda/lib/python3.11/site-packages/boltz/data/feature/"
+        "featurizer.py', in _prepare_msa_arrays_inner\n"
+        "RuntimeError: cannot cache function: no locator available"
+    )
+
+    assert classify_boltz_failure(stderr) == "runtime_environment"
+
+
 def test_structural_qc_measures_pocket_contacts_and_clashes(tmp_path: Path) -> None:
     structure = tmp_path / "prediction.cif"
     structure.write_text(
@@ -207,3 +217,8 @@ def test_boltz_runner_locates_official_result_directory(job: BoltzJob) -> None:
     assert result.confidence_score == pytest.approx(0.81)
     assert result.structure_path is not None
     assert result.structure_path.is_file()
+    assert (job.output_dir / "boltz.stdout.log").read_text() == (
+        "Number of failed examples: 0"
+    )
+    assert (job.output_dir / "boltz.stderr.log").read_text() == ""
+    assert (job.output_dir / "boltz.execution.json").is_file()

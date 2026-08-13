@@ -484,7 +484,15 @@ def _pdbqt_coordinates(path: Path) -> list[tuple[float, float, float]]:
     coordinates: list[tuple[float, float, float]] = []
     if not path.is_file():
         return coordinates
+    saw_model = False
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("MODEL"):
+            if saw_model:
+                break
+            saw_model = True
+            continue
+        if saw_model and line.startswith("ENDMDL"):
+            break
         if not line.startswith(("ATOM", "HETATM")):
             continue
         try:

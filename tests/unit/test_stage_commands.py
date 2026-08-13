@@ -7,7 +7,9 @@ from typer.testing import CliRunner
 
 from airti_tf.cli import app
 from airti_tf.refinement.boltz2 import BoltzSeedResult
+from airti_tf.pockets.receptor import DockingBox
 from airti_tf.screening.quickvina import DockingSeedResult
+from airti_tf.screening.quickvina import DockingJob
 from airti_tf.stages import (
     BoltzRefinementSummary,
     MDBundleSummary,
@@ -19,6 +21,7 @@ from airti_tf.stages import (
     render_report_bundle,
     run_md_bundle,
     screen_ligand_bundle,
+    _pose_consistency,
 )
 from airti_tf.state import StateStore
 
@@ -85,6 +88,37 @@ def test_prepare_ligand_bundle_rejects_duplicate_query_ids(tmp_path: Path) -> No
             max_molecules=5,
             pdbqt_preparer=lambda _input, _output: None,
         )
+
+
+def test_pose_consistency_compares_only_best_pose_from_each_seed(tmp_path: Path) -> None:
+    job = DockingJob(
+        job_id="pose-test",
+        receptor_pdbqt=tmp_path / "receptor.pdbqt",
+        ligand_pdbqt=tmp_path / "ligand.pdbqt",
+        box=DockingBox(center=(0.0, 0.0, 0.0), size=(18.0, 18.0, 18.0)),
+        output_dir=tmp_path,
+    )
+
+    def atom(serial: int, x: float, y: float, z: float) -> str:
+        return (
+            f"HETATM{serial:5d}  C{serial:<2} LIG B   1    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00     0.000 C\n"
+        )
+
+    for seed, shift in ((11, 20.0), (29, 40.0), (47, 60.0)):
+        path = tmp_path / f"pose-test.seed{seed}.poses.pdbqt"
+        path.write_text(
+            "MODEL 1\n"
+            + atom(1, 1.0, 2.0, 3.0)
+            + atom(2, 2.0, 3.0, 4.0)
+            + "ENDMDL\nMODEL 2\n"
+            + atom(1, shift, shift, shift)
+            + atom(2, shift + 1.0, shift + 1.0, shift + 1.0)
+            + "ENDMDL\n",
+            encoding="utf-8",
+        )
+
+    assert _pose_consistency(job, [11, 29, 47]) == 1.0
 
 
 def test_screen_bundle_calibrates_ready_targets_and_preserves_coverage(

@@ -14,7 +14,7 @@ from typing import Any, Literal
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from airti_tf.manifest_io import write_artifact
+from airti_tf.manifest_io import write_artifact, write_bytes_atomic
 
 
 class MissingMSAError(FileNotFoundError):
@@ -270,6 +270,12 @@ def summarize_boltz_seeds(records: list[BoltzSeedResult]) -> BoltzSummary:
 def classify_boltz_failure(stderr: str) -> str:
     """Map Boltz failures to stable codes used by retry policy."""
     lowered = stderr.lower()
+    if (
+        "no locator available" in lowered
+        or "no writable cache directories" in lowered
+        or "permission denied" in lowered and "cache" in lowered
+    ):
+        return "runtime_environment"
     if "out of memory" in lowered or "cuda oom" in lowered:
         return "cuda_oom"
     if "yaml" in lowered:
@@ -280,7 +286,11 @@ def classify_boltz_failure(stderr: str) -> str:
         return "nan_output"
     if "constraint" in lowered:
         return "constraint_violation"
-    if "msa" in lowered:
+    if re.search(
+        r"(?:msa|a3m).{0,80}(?:not found|no such file|does not exist|missing)",
+        lowered,
+        flags=re.DOTALL,
+    ):
         return "missing_msa"
     return "nonzero_exit"
 
@@ -326,7 +336,25 @@ def run_boltz_seed(
 ) -> BoltzSeedResult:
     """Execute one Boltz seed, generate structural QC, and parse its outputs."""
     job.output_dir.mkdir(parents=True, exist_ok=True)
-    result = executor(build_boltz_command(job, seed=seed), timeout_seconds)
+    command = build_boltz_command(job, seed=seed)
+    result = executor(command, timeout_seconds)
+    stdout_sha256 = write_bytes_atomic(
+        job.output_dir / "boltz.stdout.log", result.stdout.encode("utf-8")
+    )
+    stderr_sha256 = write_bytes_atomic(
+        job.output_dir / "boltz.stderr.log", result.stderr.encode("utf-8")
+    )
+    write_artifact(
+        job.output_dir / "boltz.execution.json",
+        {
+            "command": command,
+            "return_code": result.return_code,
+            "seed": seed,
+            "stderr_sha256": stderr_sha256,
+            "stdout_sha256": stdout_sha256,
+            "timed_out": result.timed_out,
+        },
+    )
     if result.timed_out:
         return BoltzSeedResult(seed=seed, status="failed", error_code="timeout")
     if result.return_code != 0:

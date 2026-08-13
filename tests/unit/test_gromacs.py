@@ -96,7 +96,7 @@ def test_grompp_uses_npt_coordinates_and_fixed_topology(tmp_path: Path) -> None:
 def test_system_build_uses_real_ambertools_parmed_and_gromacs_commands(
     tmp_path: Path,
 ) -> None:
-    render_system_inputs(tmp_path, velocity_seed=12345)
+    render_system_inputs(tmp_path, velocity_seed=12345, ligand_formal_charge=-1)
     commands = build_system_commands(Path("complex.cif"), tmp_path)
     flattened = [token for command in commands for token in command]
 
@@ -121,8 +121,16 @@ def test_system_build_uses_real_ambertools_parmed_and_gromacs_commands(
     assert "[ WAT ]" in (tmp_path / "write_water_index.py").read_text()
     genion = next(command for command in commands if command[:2] == ["gmx", "genion"])
     assert genion[genion.index("-n") + 1].endswith("water.ndx")
-    assert genion[genion.index("-pname") + 1] == "Na+"
-    assert genion[genion.index("-nname") + 1] == "Cl-"
+    assert genion[genion.index("-pname") + 1] == "NA"
+    assert genion[genion.index("-nname") + 1] == "CL"
+    assert '"Na+": "NA"' in (tmp_path / "convert_parmed.py").read_text()
+    assert '"Cl-": "CL"' in (tmp_path / "convert_parmed.py").read_text()
+    assert "ligand_formal_charge = -1" in (
+        tmp_path / "convert_parmed.py"
+    ).read_text()
+    assert "charge_normalization.json" in (
+        tmp_path / "convert_parmed.py"
+    ).read_text()
     assert "gen-seed = 12345" in (tmp_path / "nvt.mdp").read_text()
 
 
@@ -191,7 +199,11 @@ def test_system_builder_requires_every_equilibration_artifact(tmp_path: Path) ->
             for filename in ("solvated.prmtop", "solvated.inpcrd"):
                 (cwd / filename).write_text("generated\n")
         elif command[0] == "python" and command[1].endswith("convert_parmed.py"):
-            for filename in ("topol.top", "solvated.gro"):
+            for filename in (
+                "topol.top",
+                "solvated.gro",
+                "charge_normalization.json",
+            ):
                 (cwd / filename).write_text("generated\n")
         elif command[0] == "python":
             (cwd / "water.ndx").write_text("[ WAT ]\n1 2 3\n")

@@ -12,6 +12,10 @@ ENV PATH=/opt/conda/bin:${PATH} \
     BOLTZ_CACHE=/models/boltz \
     AIRTI_ARTIFACT_ROOT=/data/airti-target-fishing \
     AIRTI_CACHE_ROOT=/models/airti-target-fishing \
+    NUMBA_CACHE_DIR=/tmp/airti-cache/numba \
+    MPLCONFIGDIR=/tmp/airti-cache/matplotlib \
+    XDG_CACHE_HOME=/tmp/airti-cache/xdg \
+    TRITON_CACHE_DIR=/tmp/airti-cache/triton \
     PYTHONUNBUFFERED=1
 
 COPY --chown=$MAMBA_USER:$MAMBA_USER containers/environment.lock.yml /tmp/environment.lock.yml
