@@ -6,6 +6,7 @@ include { SCREEN } from './modules/screen'
 include { REFINE } from './modules/refine'
 include { MD } from './modules/md'
 include { REPORT } from './modules/report'
+include { EVALUATE_CASE } from './modules/evaluate_case'
 
 workflow {
     if (!params.queries) {
@@ -31,4 +32,13 @@ workflow {
     refined = REFINE(screened.calibrated)
     simulated = MD(refined.selected)
     REPORT(simulated.completed)
+    if (params.case_definition) {
+        case_ch = Channel.fromPath(params.case_definition, checkIfExists: true)
+        EVALUATE_CASE(
+            screened.calibrated,
+            refined.selected,
+            simulated.completed,
+            case_ch,
+        )
+    }
 }

@@ -33,7 +33,9 @@ process MD {
         airti-tf run-md \
           --candidates ${refined} \
           --output md_candidates.jsonl \
-          --asset-dir md_assets
+          --asset-dir md_assets \
+          --top-n ${params.md_top_n} \
+          --protocol ${params.md_protocol}
         """
     }
 }

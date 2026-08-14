@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Literal
+from typing import Literal, cast
 
 from dimorphite_dl import protonate_smiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,7 +80,89 @@ def _embed(molecule: Chem.Mol) -> str | None:
     return str(Chem.MolToMolBlock(molecule_with_hydrogens))
 
 
-def prepare_ligand(smiles: str, *, profile: Profile) -> LigandPreparationResult:
+def _connectivity_key(molecule: Chem.Mol) -> str:
+    """Return a charge-insensitive, tautomer-normalized stereochemical key."""
+    neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(molecule))
+    canonical = rdMolStandardize.TautomerEnumerator().Canonicalize(neutral)
+    return cast(
+        str,
+        Chem.MolToSmiles(
+            canonical, canonical=True, isomericSmiles=True
+        ),
+    )
+
+
+def _state_candidates(
+    parent: Chem.Mol,
+    parent_smiles: str,
+    *,
+    explicit_state_smiles: list[str] | None,
+) -> tuple[dict[str, Chem.Mol], str | None]:
+    if explicit_state_smiles is not None:
+        if not explicit_state_smiles:
+            return {}, "explicit_states_empty"
+        parent_key = _connectivity_key(parent)
+        explicit: dict[str, Chem.Mol] = {}
+        for state_smiles in explicit_state_smiles:
+            state = Chem.MolFromSmiles(state_smiles)
+            if state is None or len(Chem.GetMolFrags(state)) != 1:
+                return {}, "invalid_explicit_state"
+            if _connectivity_key(state) != parent_key:
+                return {}, "explicit_state_connectivity_mismatch"
+            canonical = Chem.MolToSmiles(
+                state, canonical=True, isomericSmiles=True
+            )
+            explicit.setdefault(canonical, state)
+        return explicit, None
+
+    try:
+        protonated = protonate_smiles(
+            parent_smiles,
+            ph_min=6.4,
+            ph_max=8.4,
+            # Dimorphite's precision scales broad empirical pKa standard
+            # deviations.  A value of 1 can deprotonate ordinary amides;
+            # zero uses the model means within the requested pH window.
+            precision=0.0,
+            max_variants=16,
+        )
+    except Exception:
+        return {}, "protonation_failed"
+    base: dict[str, Chem.Mol] = {
+        parent_smiles: Chem.Mol(parent),
+    }
+    for state_smiles in protonated:
+        state = Chem.MolFromSmiles(state_smiles)
+        if state is None:
+            continue
+        canonical = Chem.MolToSmiles(
+            state, canonical=True, isomericSmiles=True
+        )
+        base.setdefault(canonical, state)
+
+    # Retain every direct protomer before adding at most one canonical
+    # tautomer per protomer.  This prevents the first protomer from consuming
+    # the global 16-state cap.
+    unique = dict(sorted(base.items()))
+    enumerator = rdMolStandardize.TautomerEnumerator()
+    enumerator.SetMaxTautomers(16)
+    for _canonical, state in sorted(base.items()):
+        tautomer = enumerator.Canonicalize(state)
+        tautomer_smiles = Chem.MolToSmiles(
+            tautomer, canonical=True, isomericSmiles=True
+        )
+        unique.setdefault(tautomer_smiles, tautomer)
+        if len(unique) == 16:
+            break
+    return dict(list(unique.items())[:16]), None
+
+
+def prepare_ligand(
+    smiles: str,
+    *,
+    profile: Profile,
+    explicit_state_smiles: list[str] | None = None,
+) -> LigandPreparationResult:
     """Prepare pH 7.4 ± 1.0 protomer/tautomer states with explicit failure codes."""
     ligand_id = hashlib.sha256(smiles.encode()).hexdigest()
     molecule = Chem.MolFromSmiles(smiles)
@@ -118,42 +200,20 @@ def prepare_ligand(smiles: str, *, profile: Profile) -> LigandPreparationResult:
         )
 
     parent_smiles = Chem.MolToSmiles(parent, canonical=True, isomericSmiles=True)
-    try:
-        protomers = protonate_smiles(
-            parent_smiles,
-            ph_min=6.4,
-            ph_max=8.4,
-            precision=1.0,
-            max_variants=16,
-        )
-    except Exception:
-        return _failure(
-            smiles, ligand_id, "protonation_failed", fragment_count=fragment_count
-        )
-    if not protomers:
-        return _failure(
-            smiles, ligand_id, "protonation_failed", fragment_count=fragment_count
-        )
-
-    enumerator = rdMolStandardize.TautomerEnumerator()
-    enumerator.SetMaxTautomers(16)
-    unique: dict[str, Chem.Mol] = {}
-    for protomer_smiles in protomers:
-        protomer = Chem.MolFromSmiles(protomer_smiles)
-        if protomer is None:
-            continue
-        for tautomer in enumerator.Enumerate(protomer):
-            canonical = Chem.MolToSmiles(tautomer, canonical=True, isomericSmiles=True)
-            unique.setdefault(canonical, tautomer)
-            if len(unique) == 16:
-                break
-        if len(unique) == 16:
-            break
-
+    unique, state_error = _state_candidates(
+        parent,
+        parent_smiles,
+        explicit_state_smiles=explicit_state_smiles,
+    )
     if not unique:
         return _failure(
-            smiles, ligand_id, "protonation_failed", fragment_count=fragment_count
+            smiles,
+            ligand_id,
+            state_error or "protonation_failed",
+            fragment_count=fragment_count,
         )
+    if explicit_state_smiles is not None:
+        uncertainty_flags.append("curated_protonation_states")
     max_atoms = max(molecule_state.GetNumAtoms() for molecule_state in unique.values())
     if max_atoms > 128:
         return _failure(
@@ -163,7 +223,11 @@ def prepare_ligand(smiles: str, *, profile: Profile) -> LigandPreparationResult:
         uncertainty_flags.append("boltz_high_atom_count")
 
     states: list[LigandState] = []
-    for canonical, molecule_state in sorted(unique.items()):
+    ordered_states = sorted(
+        unique.items(),
+        key=lambda item: (Chem.GetFormalCharge(item[1]), item[0]),
+    )
+    for canonical, molecule_state in ordered_states:
         mol_block = _embed(molecule_state)
         if mol_block is None:
             return _failure(

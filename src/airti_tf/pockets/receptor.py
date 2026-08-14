@@ -57,12 +57,16 @@ def build_box(
 
 
 def build_meeko_command(
-    *, input_pdb: Path, output_prefix: Path, box: DockingBox
+    *,
+    input_pdb: Path,
+    output_prefix: Path,
+    box: DockingBox,
+    residue_templates: dict[str, Path] | None = None,
 ) -> list[str]:
     """Build a Meeko receptor-preparation command with explicit output paths."""
     center = [f"{value:.3f}" for value in box.center]
     size = [f"{value:.3f}" for value in box.size]
-    return [
+    command = [
         "mk_prepare_receptor.py",
         "-i",
         str(input_pdb),
@@ -75,4 +79,11 @@ def build_meeko_command(
         "--box_size",
         *size,
     ]
-
+    for residue_name, template in sorted((residue_templates or {}).items()):
+        template_argument = (
+            str(template)
+            if template.suffix.lower() == ".json"
+            else f"{residue_name}:{template}"
+        )
+        command.extend(["--add_templates", template_argument])
+    return command

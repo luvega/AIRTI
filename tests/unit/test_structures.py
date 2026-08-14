@@ -13,6 +13,7 @@ def candidate(source: str, **overrides: object) -> StructureCandidate:
         "mainchain_missing_fraction": 0.0,
         "unsupported_chemistry": False,
         "has_ligand": False,
+        "experimental_method": "x-ray" if source == "pdb" else None,
         "pae_supported": True,
     }
     payload.update(overrides)
@@ -52,6 +53,40 @@ def test_apo_structure_must_meet_stricter_resolution_cutoff() -> None:
     )
 
     assert result.structure_id == "af-good"
+
+
+def test_ligand_bound_cryo_em_structure_uses_membrane_aware_cutoff() -> None:
+    chosen = choose_structure(
+        [
+            candidate(
+                "pdb",
+                structure_id="7A6F",
+                experimental_method="electron_microscopy",
+                resolution=3.5,
+                has_ligand=True,
+            ),
+            candidate("alphafold", structure_id="af-abcb1", confidence=0.92),
+        ]
+    )
+
+    assert chosen.structure_id == "7A6F"
+
+
+def test_low_resolution_cryo_em_falls_back_to_alphafold() -> None:
+    chosen = choose_structure(
+        [
+            candidate(
+                "pdb",
+                structure_id="cryo-poor",
+                experimental_method="electron_microscopy",
+                resolution=3.6,
+                has_ligand=True,
+            ),
+            candidate("alphafold", structure_id="af-good", confidence=0.92),
+        ]
+    )
+
+    assert chosen.structure_id == "af-good"
 
 
 def test_no_usable_structure_is_preserved_as_unsupported() -> None:

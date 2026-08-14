@@ -47,6 +47,15 @@ def test_command_contains_locked_seed_and_box(job: DockingJob) -> None:
     assert command[command.index("--center_x") + 1] == "1.000"
     assert command[command.index("--size_z") + 1] == "22.000"
     assert command[command.index("--exhaustiveness") + 1] == "8"
+    assert "--cpu" not in command
+
+
+def test_command_honors_explicit_cpu_limit(job: DockingJob) -> None:
+    command = build_quickvina_command(
+        job.model_copy(update={"cpu": 1}), seed=29
+    )
+
+    assert command[command.index("--cpu") + 1] == "1"
 
 
 def test_vina_control_uses_same_job_contract(job: DockingJob) -> None:

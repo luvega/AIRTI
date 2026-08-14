@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from airti_tf.simulation.gromacs import (
+    build_membrane_command,
     build_grompp_command,
     build_md_system,
     build_mdrun_command,
@@ -11,6 +12,8 @@ from airti_tf.simulation.gromacs import (
     extract_boltz_complex,
     plan_md_replicas,
     prepare_ligand_for_amber,
+    render_md_mdp,
+    render_membrane_inputs,
     render_production_mdp,
     render_system_inputs,
     validate_parameterization,
@@ -57,6 +60,61 @@ def test_md_protocol_is_exactly_100_ns() -> None:
     assert mdp["tau-t"] == pytest.approx(0.1)
     assert mdp["tau-p"] == pytest.approx(2.0)
     assert mdp["pbc"] == "xyz"
+
+
+def test_smoke_protocol_is_one_ns_and_membrane_pressure_is_semiisotropic() -> None:
+    soluble = render_md_mdp(protocol="smoke", system_kind="soluble")
+    membrane = render_md_mdp(protocol="production", system_kind="membrane")
+
+    assert soluble["nsteps"] == 500_000
+    assert membrane["nsteps"] == 50_000_000
+    assert membrane["pcoupltype"] == "semiisotropic"
+    assert membrane["ref-p"] == "1.0 1.0"
+    assert membrane["compressibility"] == "4.5e-5 4.5e-5"
+
+
+def test_membrane_builder_freezes_lipid_ratio_forcefields_and_salt(tmp_path: Path) -> None:
+    complex_pdb = tmp_path / "complex.pdb"
+    complex_pdb.write_text("ATOM\n", encoding="utf-8")
+    ligand_frcmod = tmp_path / "ligand.frcmod"
+    ligand_lib = tmp_path / "ligand.lib"
+    ligand_frcmod.write_text("params\n", encoding="utf-8")
+    ligand_lib.write_text("library\n", encoding="utf-8")
+
+    command = build_membrane_command(
+        complex_pdb=complex_pdb,
+        output_pdb=tmp_path / "membrane.pdb",
+        ligand_frcmod=ligand_frcmod,
+        ligand_lib=ligand_lib,
+    )
+
+    assert command[command.index("-l") + 1] == "POPC:CHL1"
+    assert command[command.index("-r") + 1] == "4:1"
+    assert command[command.index("--saltcon") + 1] == "0.15"
+    assert command[command.index("--ffprot") + 1] == "ff19SB"
+    assert command[command.index("--fflip") + 1] == "lipid21"
+    assert command[command.index("--ffwat") + 1] == "tip3p"
+    assert "--preoriented" in command
+    assert "--keepligs" in command
+    assert "--parametrize" in command
+    assert "--gaff2" in command
+
+
+def test_membrane_equilibration_is_five_ns_and_requires_cofactor_adapter(
+    tmp_path: Path,
+) -> None:
+    render_membrane_inputs(
+        tmp_path,
+        velocity_seed=12345,
+        protocol="smoke",
+        cofactor_parameter_ids=["p450-ferric-thiolate-v1"],
+        cofactor_parameter_root=tmp_path / "cofactors",
+    )
+
+    assert "nsteps = 2500000" in (tmp_path / "npt.mdp").read_text()
+    preflight = (tmp_path / "cofactor_preflight.json").read_text()
+    assert '"passed":false' in preflight
+    assert "p450-ferric-thiolate-v1" in preflight
 
 
 def test_resume_uses_checkpoint_when_present(tmp_path: Path) -> None:

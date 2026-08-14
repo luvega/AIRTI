@@ -31,6 +31,9 @@ class UniProtRecord(BaseModel):
     reviewed: bool
     release: str
     isoform_aliases: list[str] = Field(default_factory=list)
+    transmembrane_segments: int = Field(default=0, ge=0)
+    membrane_associated: bool = False
+    protein_family: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,10 @@ def build_uniprot_url(*, proteome: str) -> str:
     parameters = {
         "compressed": "true",
         "format": "tsv",
-        "fields": "accession,reviewed,gene_primary,organism_id,sequence",
+        "fields": (
+            "accession,reviewed,gene_primary,organism_id,sequence,ft_transmem,"
+            "cc_subcellular_location,protein_families"
+        ),
         "query": (
             f"(proteome:{proteome}) AND (organism_id:9606) AND (reviewed:true)"
         ),
@@ -86,6 +92,12 @@ def parse_uniprot_tsv(path: Path, *, release: str) -> list[UniProtRecord]:
             sequence = "".join(row["Sequence"].split()).upper()
             if not sequence.isalpha() or not sequence.isascii():
                 raise ValueError(f"invalid sequence alphabet for {accession}")
+            protein_family = (
+                row.get("Protein families") or ""
+            ).strip() or None
+            subcellular_location = (
+                row.get("Subcellular location [CC]") or ""
+            ).lower()
             record = UniProtRecord(
                 uniprot_id=accession,
                 gene_primary=(row.get("Gene Names (primary)") or "").strip() or None,
@@ -94,6 +106,14 @@ def parse_uniprot_tsv(path: Path, *, release: str) -> list[UniProtRecord]:
                 sequence_sha256=hashlib.sha256(sequence.encode()).hexdigest(),
                 reviewed=reviewed,
                 release=release,
+                transmembrane_segments=(
+                    row.get("Transmembrane") or ""
+                ).count("TRANSMEM"),
+                membrane_associated=(
+                    "membrane" in subcellular_location
+                    and "cytochrome p450" in (protein_family or "").lower()
+                ),
+                protein_family=protein_family,
             )
             previous = candidates.get(accession)
             if previous is None or (record.reviewed and not previous.reviewed):

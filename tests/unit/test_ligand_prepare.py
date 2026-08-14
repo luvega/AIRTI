@@ -49,3 +49,33 @@ def test_boltz_atom_limits_are_explicit() -> None:
     assert result.status == "succeeded"
     assert "boltz_high_atom_count" in result.uncertainty_flags
     assert all(state.atom_count <= 128 for state in result.states)
+
+
+def test_curated_nelfinavir_states_override_generic_pka_enumeration() -> None:
+    neutral = (
+        "CC1=C(C=CC=C1O)C(=O)N[C@@H](CSC2=CC=CC=C2)"
+        "[C@@H](CN3C[C@H]4CCCC[C@H]4C[C@H]3C(=O)NC(C)(C)C)O"
+    )
+    cation = neutral.replace("CN3C", "C[NH+]3C")
+
+    result = prepare_ligand(
+        neutral,
+        profile="production",
+        explicit_state_smiles=[neutral, cation],
+    )
+
+    assert result.status == "succeeded"
+    assert [state.formal_charge for state in result.states] == [0, 1]
+    assert all("[O-]" not in state.canonical_smiles for state in result.states)
+    assert "curated_protonation_states" in result.uncertainty_flags
+
+
+def test_curated_state_must_preserve_parent_connectivity() -> None:
+    result = prepare_ligand(
+        "CCO",
+        profile="local",
+        explicit_state_smiles=["CCN"],
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "explicit_state_connectivity_mismatch"

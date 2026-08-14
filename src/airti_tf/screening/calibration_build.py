@@ -162,6 +162,9 @@ def calibrate_pocket_background(
                 ligand_pdbqt=pdbqt,
                 box=box,
                 output_dir=docking_dir / f"state-{state_index}",
+                # The executor owns calibration parallelism; without this,
+                # every QuickVina process tries to claim all visible CPUs.
+                cpu=1,
             )
             seed_results = [docking_runner(job, seed) for seed in (11, 29, 47)]
             try:

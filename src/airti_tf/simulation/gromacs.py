@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from collections.abc import Callable
@@ -12,10 +13,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from airti_tf.manifest_io import write_artifact, write_bytes_atomic
+from airti_tf.simulation.analysis import (
+    TrajectoryAnalysis,
+    analyze_trajectory,
+    measure_trajectory,
+)
 
 CommandRunner = Callable[
     [list[str], Path, str | None], subprocess.CompletedProcess[str]
 ]
+MDProtocol = Literal["smoke", "production"]
+MDSystemKind = Literal["soluble", "membrane"]
 
 
 class MDReplicaPlan(BaseModel):
@@ -45,8 +53,10 @@ class ComplexComponents(BaseModel):
 
     protein_pdb: Path
     ligand_pdb: Path
+    cofactor_pdb: Path | None = None
     protein_atom_count: int
     ligand_atom_count: int
+    cofactor_atom_count: int = 0
 
 
 class MDSystemBuildResult(BaseModel):
@@ -62,6 +72,20 @@ class MDSystemBuildResult(BaseModel):
     protein_atom_count: int = 0
     ligand_atom_count: int = 0
     command_logs: list[Path] = Field(default_factory=list)
+
+
+class MDTrajectoryResult(BaseModel):
+    """Production/smoke trajectory execution and conservative analysis result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["stable", "unstable", "failed"]
+    completed_ns: float = Field(ge=0)
+    md_score: float | None = Field(default=None, ge=0, le=1)
+    error_code: str | None = None
+    trajectory_path: Path | None = None
+    checkpoint_path: Path | None = None
+    metrics_path: Path | None = None
 
 
 def _column(
@@ -115,7 +139,7 @@ def extract_boltz_complex(
 
     if not complex_cif.is_file() or complex_cif.stat().st_size == 0:
         raise ValueError(f"Boltz complex is missing or empty: {complex_cif}")
-    raw_data = MMCIF2Dict(str(complex_cif))  # type: ignore[no-untyped-call]
+    raw_data = MMCIF2Dict(str(complex_cif))
     data: dict[str, object] = dict(raw_data)
     groups_raw = data.get("_atom_site.group_PDB")
     groups = groups_raw if isinstance(groups_raw, list) else [groups_raw]
@@ -147,6 +171,7 @@ def extract_boltz_complex(
 
     protein_lines: list[str] = []
     ligand_lines: list[str] = []
+    cofactor_lines: list[str] = []
     ligand_components: set[str] = set()
     waters = {"HOH", "WAT", "TIP3", "SOL"}
     for index in range(count):
@@ -164,7 +189,12 @@ def extract_boltz_complex(
             and chain == "B"
             and residues[index].upper() not in waters
         )
-        if not is_protein and not is_ligand:
+        is_cofactor = (
+            group == "HETATM"
+            and chain not in {"A", "B"}
+            and residues[index].upper() not in waters
+        )
+        if not is_protein and not is_ligand and not is_cofactor:
             continue
         try:
             residue_number = (
@@ -184,8 +214,12 @@ def extract_boltz_complex(
         except ValueError as error:
             raise ValueError("Boltz complex contains invalid atom coordinates") from error
         output_group = "ATOM" if is_protein else "HETATM"
-        output_chain = "A" if is_protein else "B"
-        output_residue = residues[index] if is_protein else "LIG"
+        output_chain = "A" if is_protein else ("B" if is_ligand else "C")
+        output_residue = (
+            residues[index]
+            if is_protein or is_cofactor
+            else "LIG"
+        )
         line = _pdb_atom_line(
             group=output_group,
             serial=len(protein_lines) + len(ligand_lines) + 1,
@@ -202,9 +236,11 @@ def extract_boltz_complex(
         )
         if is_protein:
             protein_lines.append(line)
-        else:
+        elif is_ligand:
             ligand_components.add(residues[index])
             ligand_lines.append(line)
+        else:
+            cofactor_lines.append(line)
     if not protein_lines:
         raise ValueError("Boltz complex contains no protein atoms in chain A")
     if not ligand_lines:
@@ -215,16 +251,81 @@ def extract_boltz_complex(
     output_dir.mkdir(parents=True, exist_ok=True)
     protein_path = output_dir / "protein.pdb"
     ligand_path = output_dir / "ligand.pdb"
+    cofactor_path = output_dir / "cofactor.pdb"
     write_bytes_atomic(
         protein_path, ("".join(protein_lines) + "TER\nEND\n").encode("utf-8")
     )
     write_bytes_atomic(ligand_path, ("".join(ligand_lines) + "END\n").encode("utf-8"))
+    if cofactor_lines:
+        write_bytes_atomic(
+            cofactor_path,
+            ("".join(cofactor_lines) + "END\n").encode("utf-8"),
+        )
     return ComplexComponents(
         protein_pdb=protein_path,
         ligand_pdb=ligand_path,
+        cofactor_pdb=cofactor_path if cofactor_lines else None,
         protein_atom_count=len(protein_lines),
         ligand_atom_count=len(ligand_lines),
+        cofactor_atom_count=len(cofactor_lines),
     )
+
+
+def align_boltz_complex_to_reference(
+    complex_cif: Path,
+    *,
+    reference_pdb: Path,
+    output_cif: Path,
+) -> Path:
+    """Rigidly align the Boltz protein and all ligands to an OPM reference."""
+    from Bio.Align import PairwiseAligner
+    from Bio.PDB import MMCIFIO, MMCIFParser, PDBParser, Superimposer
+    from Bio.SeqUtils import seq1
+
+    mobile_structure = MMCIFParser(QUIET=True).get_structure(
+        "mobile", str(complex_cif)
+    )
+    reference_structure = PDBParser(QUIET=True).get_structure(
+        "reference", str(reference_pdb)
+    )
+
+    def ca_atoms(structure: object) -> tuple[str, list[object]]:
+        residues = []
+        for residue in structure.get_residues():
+            if "CA" in residue and residue.id[0] == " ":
+                residues.append(residue)
+        sequence = "".join(seq1(residue.resname, undef_code="X") for residue in residues)
+        return sequence, [residue["CA"] for residue in residues]
+
+    reference_sequence, reference_atoms = ca_atoms(reference_structure)
+    mobile_sequence, mobile_atoms = ca_atoms(mobile_structure)
+    aligner = PairwiseAligner()
+    aligner.mode = "global"
+    aligner.match_score = 2
+    aligner.mismatch_score = -1
+    aligner.open_gap_score = -5
+    aligner.extend_gap_score = -0.5
+    alignment = aligner.align(reference_sequence, mobile_sequence)[0]
+    paired_reference = []
+    paired_mobile = []
+    for reference_index, mobile_index in zip(
+        alignment.indices[0], alignment.indices[1], strict=True
+    ):
+        if reference_index >= 0 and mobile_index >= 0:
+            paired_reference.append(reference_atoms[reference_index])
+            paired_mobile.append(mobile_atoms[mobile_index])
+    if len(paired_reference) < 3:
+        raise ValueError("fewer than three aligned C-alpha atoms for membrane orientation")
+    superimposer = Superimposer()
+    superimposer.set_atoms(paired_reference, paired_mobile)
+    superimposer.apply(list(mobile_structure.get_atoms()))
+    output_cif.parent.mkdir(parents=True, exist_ok=True)
+    writer = MMCIFIO()
+    writer.set_structure(mobile_structure)
+    writer.save(str(output_cif))
+    if not output_cif.is_file() or output_cif.stat().st_size == 0:
+        raise RuntimeError("aligned Boltz complex was not written")
+    return output_cif
 
 
 def prepare_ligand_for_amber(
@@ -252,7 +353,7 @@ def prepare_ligand_for_amber(
     if template.GetNumHeavyAtoms() != observed.GetNumHeavyAtoms():
         raise ValueError("Boltz ligand atom count does not match the ligand SMILES")
     try:
-        assigned = AllChem.AssignBondOrdersFromTemplate(  # type: ignore[no-untyped-call]
+        assigned = AllChem.AssignBondOrdersFromTemplate(
             template, observed
         )
         Chem.SanitizeMol(assigned)
@@ -268,17 +369,19 @@ def prepare_ligand_for_amber(
     return output_sdf
 
 
-def render_production_mdp() -> dict[str, str | int | float]:
-    """Return the fixed 100 ns, 300 K, 1 bar production protocol.
+def render_md_mdp(
+    *, protocol: MDProtocol, system_kind: MDSystemKind
+) -> dict[str, str | int | float]:
+    """Return the frozen 1 ns smoke or 100 ns production protocol.
 
     GROMACS uses ps for ``dt``. Therefore 50,000,000 steps at 0.002 ps
     equal exactly 100,000 ps (100 ns). Coordinates and energies are written
     every 5,000 steps, i.e. every 10 ps.
     """
-    return {
+    settings: dict[str, str | int | float] = {
         "integrator": "md",
         "dt": 0.002,
-        "nsteps": 50_000_000,
+        "nsteps": 500_000 if protocol == "smoke" else 50_000_000,
         "nstxout-compressed": 5_000,
         "nstenergy": 5_000,
         "continuation": "yes",
@@ -300,6 +403,558 @@ def render_production_mdp() -> dict[str, str | int | float]:
         "gen-vel": "no",
         "pbc": "xyz",
     }
+    if system_kind == "membrane":
+        settings.update(
+            {
+                "pcoupltype": "semiisotropic",
+                "ref-p": "1.0 1.0",
+                "compressibility": "4.5e-5 4.5e-5",
+            }
+        )
+    return settings
+
+
+def render_production_mdp() -> dict[str, str | int | float]:
+    """Return the fixed soluble 100 ns, 300 K, 1 bar protocol."""
+    return render_md_mdp(protocol="production", system_kind="soluble")
+
+
+def build_membrane_command(
+    *,
+    complex_pdb: Path,
+    output_pdb: Path,
+    ligand_frcmod: Path,
+    ligand_lib: Path,
+    cofactor_parameters: list[tuple[Path, Path]] | None = None,
+) -> list[str]:
+    """Build the pinned POPC/cholesterol PACKMOL-Memgen command."""
+    required = (complex_pdb, ligand_frcmod, ligand_lib)
+    if any(not path.is_file() or path.stat().st_size == 0 for path in required):
+        raise ValueError("membrane builder input is missing or empty")
+    command = [
+        "packmol-memgen",
+        "-p",
+        str(complex_pdb),
+        "-o",
+        str(output_pdb),
+        "--preoriented",
+        "--keepligs",
+        "-l",
+        "POPC:CHL1",
+        "-r",
+        "4:1",
+        "--salt",
+        "--salt_c",
+        "Na+",
+        "--salt_a",
+        "Cl-",
+        "--saltcon",
+        "0.15",
+        "--parametrize",
+        "--ffprot",
+        "ff19SB",
+        "--fflip",
+        "lipid21",
+        "--ffwat",
+        "tip3p",
+        "--gaff2",
+        "--ligand_param",
+        f"{ligand_frcmod}:{ligand_lib}",
+        "--notprotonate",
+        "--noprogress",
+        "--overwrite",
+    ]
+    for frcmod, library in cofactor_parameters or []:
+        if any(
+            not path.is_file() or path.stat().st_size == 0
+            for path in (frcmod, library)
+        ):
+            raise ValueError("cofactor parameter adapter is missing or empty")
+        command.extend(["--ligand_param", f"{frcmod}:{library}"])
+    return command
+
+
+def render_membrane_inputs(
+    run_dir: Path,
+    *,
+    velocity_seed: int,
+    protocol: MDProtocol,
+    cofactor_parameter_ids: list[str],
+    cofactor_parameter_root: Path,
+) -> bool:
+    """Write membrane MDPs and a fail-closed cofactor-adapter preflight."""
+    if not 1 <= velocity_seed <= 2_147_483_647:
+        raise ValueError("velocity seed must be a positive signed 32-bit integer")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    adapters: list[dict[str, object]] = []
+    for parameter_id in cofactor_parameter_ids:
+        adapter_dir = cofactor_parameter_root / parameter_id
+        manifest = adapter_dir / "adapter.json"
+        frcmod = adapter_dir / "cofactor.frcmod"
+        library = adapter_dir / "cofactor.lib"
+        missing = [
+            str(path)
+            for path in (manifest, frcmod, library)
+            if not path.is_file() or path.stat().st_size == 0
+        ]
+        violations: list[str] = []
+        if not missing:
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+                if payload.get("parameter_id") != parameter_id:
+                    violations.append("parameter_id_mismatch")
+                expected_hashes = {
+                    frcmod: payload.get("frcmod_sha256"),
+                    library: payload.get("library_sha256"),
+                }
+                for path, expected_hash in expected_hashes.items():
+                    observed_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+                    if expected_hash != observed_hash:
+                        violations.append(f"sha256_mismatch:{path.name}")
+                if not payload.get("source") or not payload.get("chemical_state"):
+                    violations.append("provenance_incomplete")
+            except (OSError, json.JSONDecodeError, AttributeError):
+                violations.append("adapter_manifest_invalid")
+        adapters.append(
+            {
+                "parameter_id": parameter_id,
+                "adapter_dir": str(adapter_dir),
+                "frcmod": str(frcmod),
+                "library": str(library),
+                "missing": missing,
+                "violations": violations,
+                "passed": not missing and not violations,
+            }
+        )
+    passed = all(bool(adapter["passed"]) for adapter in adapters)
+    write_artifact(
+        run_dir / "cofactor_preflight.json",
+        {"schema_version": "1.0", "passed": passed, "adapters": adapters},
+    )
+    common: dict[str, str | int | float] = {
+        "integrator": "md",
+        "dt": 0.002,
+        "nstxout-compressed": 5_000,
+        "nstenergy": 1_000,
+        "constraints": "h-bonds",
+        "constraint-algorithm": "lincs",
+        "cutoff-scheme": "Verlet",
+        "coulombtype": "PME",
+        "rcoulomb": 1.0,
+        "vdwtype": "Cut-off",
+        "rvdw": 1.0,
+        "tcoupl": "V-rescale",
+        "tc-grps": "System",
+        "tau-t": 0.1,
+        "ref-t": 300,
+        "pbc": "xyz",
+    }
+    nvt: dict[str, str | int | float] = {
+        **common,
+        "nsteps": 250_000,
+        "continuation": "no",
+        "pcoupl": "no",
+        "gen-vel": "yes",
+        "gen-temp": 300,
+        "gen-seed": velocity_seed,
+    }
+    npt: dict[str, str | int | float] = {
+        **common,
+        "nsteps": 2_500_000,
+        "continuation": "yes",
+        "pcoupl": "C-rescale",
+        "pcoupltype": "semiisotropic",
+        "tau-p": 2.0,
+        "ref-p": "1.0 1.0",
+        "compressibility": "4.5e-5 4.5e-5",
+        "gen-vel": "no",
+    }
+    minimization: dict[str, str | int | float] = {
+        "integrator": "steep",
+        "emtol": 1000.0,
+        "emstep": 0.01,
+        "nsteps": 50_000,
+        "cutoff-scheme": "Verlet",
+        "coulombtype": "PME",
+        "rcoulomb": 1.0,
+        "vdwtype": "Cut-off",
+        "rvdw": 1.0,
+        "constraints": "h-bonds",
+        "pbc": "xyz",
+    }
+    mdp_files: dict[str, dict[str, str | int | float]] = {
+        "min.mdp": minimization,
+        "nvt.mdp": nvt,
+        "npt.mdp": npt,
+        "md.mdp": render_md_mdp(protocol=protocol, system_kind="membrane"),
+    }
+    for filename, settings in mdp_files.items():
+        write_bytes_atomic(run_dir / filename, _mdp_text(settings).encode())
+    return passed
+
+
+def _combine_complex_pdb(components: ComplexComponents, output: Path) -> Path:
+    parts: list[str] = []
+    for path in (
+        components.protein_pdb,
+        components.ligand_pdb,
+        components.cofactor_pdb,
+    ):
+        if path is None:
+            continue
+        parts.extend(
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line not in {"END", "TER"}
+        )
+    write_bytes_atomic(output, ("\n".join(parts) + "\nTER\nEND\n").encode())
+    return output
+
+
+def _cofactor_parameter_files(
+    parameter_ids: list[str], *, root: Path
+) -> tuple[list[tuple[Path, Path]], list[str]]:
+    parameters: list[tuple[Path, Path]] = []
+    leap_lines: list[str] = []
+    for parameter_id in parameter_ids:
+        adapter_dir = root / parameter_id
+        manifest = json.loads(
+            (adapter_dir / "adapter.json").read_text(encoding="utf-8")
+        )
+        if manifest.get("parameter_id") != parameter_id:
+            raise ValueError("cofactor adapter identity mismatch")
+        raw_lines = manifest.get("leap_lines", [])
+        if not isinstance(raw_lines, list) or not all(
+            isinstance(line, str) for line in raw_lines
+        ):
+            raise ValueError("cofactor adapter leap_lines must be strings")
+        parameters.append(
+            (
+                adapter_dir / "cofactor.frcmod",
+                adapter_dir / "cofactor.lib",
+            )
+        )
+        leap_lines.extend(raw_lines)
+    return parameters, leap_lines
+
+
+def build_membrane_md_system(
+    complex_cif: Path,
+    *,
+    run_dir: Path,
+    ligand_smiles: str,
+    ligand_formal_charge: int,
+    velocity_seed: int,
+    protocol: MDProtocol,
+    cofactor_parameter_ids: list[str],
+    cofactor_parameter_root: Path,
+    command_runner: CommandRunner | None = None,
+) -> MDSystemBuildResult:
+    """Build and equilibrate a preoriented POPC/CHL1 membrane system."""
+    run_dir = run_dir.resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    executor = command_runner or _run_system_command
+    try:
+        components = extract_boltz_complex(complex_cif, output_dir=run_dir)
+        prepare_ligand_for_amber(
+            components.ligand_pdb,
+            ligand_smiles=ligand_smiles,
+            ligand_formal_charge=ligand_formal_charge,
+            output_sdf=run_dir / "ligand.sdf",
+        )
+        adapters_ok = render_membrane_inputs(
+            run_dir,
+            velocity_seed=velocity_seed,
+            protocol=protocol,
+            cofactor_parameter_ids=cofactor_parameter_ids,
+            cofactor_parameter_root=cofactor_parameter_root,
+        )
+        if not adapters_ok:
+            result = MDSystemBuildResult(
+                status="failed",
+                error_code="cofactor_parameter_adapter_missing",
+                completed_step="cofactor_preflight",
+                run_dir=run_dir,
+                protein_atom_count=components.protein_atom_count,
+                ligand_atom_count=components.ligand_atom_count,
+            )
+            _write_build_status(run_dir, result)
+            return result
+        cofactor_parameters, leap_lines = _cofactor_parameter_files(
+            cofactor_parameter_ids, root=cofactor_parameter_root
+        )
+        complex_pdb = _combine_complex_pdb(
+            components, run_dir / "oriented_complex.pdb"
+        )
+        write_bytes_atomic(
+            run_dir / "ligand.lib.in",
+            (
+                "source leaprc.gaff2\n"
+                "LIG = loadMol2 ligand.mol2\n"
+                "saveOff LIG ligand.lib\n"
+                "quit\n"
+            ).encode(),
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        result = MDSystemBuildResult(
+            status="failed",
+            error_code="invalid_boltz_structure",
+            run_dir=run_dir,
+        )
+        write_bytes_atomic(run_dir / "membrane_setup.stderr.log", str(error).encode())
+        _write_build_status(run_dir, result)
+        return result
+
+    commands: list[tuple[str, str, list[str], tuple[str, ...]]] = [
+        (
+            "parameterize_ligand",
+            "ligand_parameterization_failed",
+            [
+                "antechamber",
+                "-i",
+                str(run_dir / "ligand.sdf"),
+                "-fi",
+                "sdf",
+                "-o",
+                str(run_dir / "ligand.mol2"),
+                "-fo",
+                "mol2",
+                "-c",
+                "bcc",
+                "-at",
+                "gaff2",
+                "-nc",
+                str(ligand_formal_charge),
+                "-s",
+                "2",
+            ],
+            ("ligand.mol2",),
+        ),
+        (
+            "check_ligand_parameters",
+            "ligand_parameterization_failed",
+            [
+                "parmchk2",
+                "-i",
+                str(run_dir / "ligand.mol2"),
+                "-f",
+                "mol2",
+                "-o",
+                str(run_dir / "ligand.frcmod"),
+                "-s",
+                "gaff2",
+            ],
+            ("ligand.frcmod",),
+        ),
+        (
+            "write_ligand_library",
+            "ligand_parameterization_failed",
+            ["tleap", "-f", str(run_dir / "ligand.lib.in")],
+            ("ligand.lib",),
+        ),
+    ]
+    logs: list[Path] = []
+    completed_step = "prepare_ligand_coordinates"
+    for index, (step, error_code, command, expected) in enumerate(commands, 1):
+        execution = executor(command, run_dir, None)
+        log = run_dir / f"{index:02d}-{step}.log"
+        write_bytes_atomic(
+            log,
+            (execution.stdout + "\n" + execution.stderr).encode(errors="replace"),
+        )
+        logs.append(log)
+        if execution.returncode != 0 or not all(
+            (run_dir / filename).is_file()
+            and (run_dir / filename).stat().st_size > 0
+            for filename in expected
+        ):
+            result = MDSystemBuildResult(
+                status="failed",
+                error_code=error_code,
+                completed_step=completed_step,
+                run_dir=run_dir,
+                protein_atom_count=components.protein_atom_count,
+                ligand_atom_count=components.ligand_atom_count,
+                command_logs=logs,
+            )
+            _write_build_status(run_dir, result)
+            return result
+        completed_step = step
+
+    membrane_pdb = run_dir / "membrane.pdb"
+    membrane_execution: subprocess.CompletedProcess[str] | None = None
+    try:
+        membrane_command = build_membrane_command(
+            complex_pdb=complex_pdb,
+            output_pdb=membrane_pdb,
+            ligand_frcmod=run_dir / "ligand.frcmod",
+            ligand_lib=run_dir / "ligand.lib",
+            cofactor_parameters=cofactor_parameters,
+        )
+        for line in leap_lines:
+            membrane_command.extend(["--leapline", line])
+        membrane_execution = executor(
+            membrane_command, run_dir, None
+        )
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        membrane_execution = None
+        detail = str(error)
+    else:
+        assert membrane_execution is not None
+        detail = membrane_execution.stdout + "\n" + membrane_execution.stderr
+    log = run_dir / "04-pack_membrane.log"
+    write_bytes_atomic(log, detail.encode(errors="replace"))
+    logs.append(log)
+    topology_candidates = sorted(run_dir.glob("*_lipid.top"))
+    coordinate_candidates = sorted(run_dir.glob("*_lipid.crd"))
+    if (
+        membrane_execution is None
+        or membrane_execution.returncode != 0
+        or len(topology_candidates) != 1
+        or len(coordinate_candidates) != 1
+    ):
+        result = MDSystemBuildResult(
+            status="failed",
+            error_code="membrane_assembly_failed",
+            completed_step=completed_step,
+            run_dir=run_dir,
+            protein_atom_count=components.protein_atom_count,
+            ligand_atom_count=components.ligand_atom_count,
+            command_logs=logs,
+        )
+        _write_build_status(run_dir, result)
+        return result
+    completed_step = "pack_membrane"
+
+    conversion = f'''from pathlib import Path
+import parmed as pmd
+root = Path(__file__).resolve().parent
+system = pmd.load_file({str(topology_candidates[0])!r}, xyz={str(coordinate_candidates[0])!r})
+system.save(str(root / "topol.top"), format="gromacs", overwrite=True)
+system.save(str(root / "initial.gro"), format="gro", overwrite=True)
+'''
+    write_bytes_atomic(run_dir / "convert_membrane.py", conversion.encode())
+    equilibration: list[tuple[str, str, list[str], tuple[str, ...]]] = [
+        (
+            "convert_topology",
+            "topology_conversion_failed",
+            ["python", str(run_dir / "convert_membrane.py")],
+            ("topol.top", "initial.gro"),
+        ),
+        (
+            "prepare_minimization",
+            "minimization_failed",
+            [
+                "gmx",
+                "grompp",
+                "-f",
+                str(run_dir / "min.mdp"),
+                "-c",
+                str(run_dir / "initial.gro"),
+                "-p",
+                str(run_dir / "topol.top"),
+                "-o",
+                str(run_dir / "min.tpr"),
+            ],
+            ("min.tpr",),
+        ),
+        (
+            "minimize",
+            "minimization_failed",
+            ["gmx", "mdrun", "-deffnm", str(run_dir / "min")],
+            ("min.gro",),
+        ),
+        (
+            "prepare_nvt",
+            "equilibration_failed",
+            [
+                "gmx",
+                "grompp",
+                "-f",
+                str(run_dir / "nvt.mdp"),
+                "-c",
+                str(run_dir / "min.gro"),
+                "-r",
+                str(run_dir / "min.gro"),
+                "-p",
+                str(run_dir / "topol.top"),
+                "-o",
+                str(run_dir / "nvt.tpr"),
+            ],
+            ("nvt.tpr",),
+        ),
+        (
+            "equilibrate_nvt",
+            "equilibration_failed",
+            ["gmx", "mdrun", "-deffnm", str(run_dir / "nvt")],
+            ("nvt.gro", "nvt.cpt"),
+        ),
+        (
+            "prepare_npt",
+            "equilibration_failed",
+            [
+                "gmx",
+                "grompp",
+                "-f",
+                str(run_dir / "npt.mdp"),
+                "-c",
+                str(run_dir / "nvt.gro"),
+                "-r",
+                str(run_dir / "nvt.gro"),
+                "-t",
+                str(run_dir / "nvt.cpt"),
+                "-p",
+                str(run_dir / "topol.top"),
+                "-o",
+                str(run_dir / "npt.tpr"),
+            ],
+            ("npt.tpr",),
+        ),
+        (
+            "equilibrate_npt",
+            "equilibration_failed",
+            ["gmx", "mdrun", "-deffnm", str(run_dir / "npt")],
+            ("npt.gro", "npt.cpt"),
+        ),
+    ]
+    for offset, (step, error_code, command, expected) in enumerate(
+        equilibration, 5
+    ):
+        execution = executor(command, run_dir, None)
+        log = run_dir / f"{offset:02d}-{step}.log"
+        write_bytes_atomic(
+            log,
+            (execution.stdout + "\n" + execution.stderr).encode(errors="replace"),
+        )
+        logs.append(log)
+        if execution.returncode != 0 or not all(
+            (run_dir / filename).is_file()
+            and (run_dir / filename).stat().st_size > 0
+            for filename in expected
+        ):
+            result = MDSystemBuildResult(
+                status="failed",
+                error_code=error_code,
+                completed_step=completed_step,
+                run_dir=run_dir,
+                protein_atom_count=components.protein_atom_count,
+                ligand_atom_count=components.ligand_atom_count,
+                command_logs=logs,
+            )
+            _write_build_status(run_dir, result)
+            return result
+        completed_step = step
+    result = MDSystemBuildResult(
+        status="succeeded",
+        completed_step=completed_step,
+        forcefield="ff19SB+Lipid21+GAFF2/TIP3P",
+        run_dir=run_dir,
+        protein_atom_count=components.protein_atom_count,
+        ligand_atom_count=components.ligand_atom_count,
+        command_logs=logs,
+    )
+    _write_build_status(run_dir, result)
+    return result
 
 
 def _mdp_text(settings: dict[str, str | int | float]) -> str:
@@ -311,6 +966,7 @@ def render_system_inputs(
     *,
     velocity_seed: int,
     ligand_formal_charge: int = 0,
+    protocol: MDProtocol = "production",
 ) -> None:
     """Write the frozen ff19SB/GAFF2/TIP3P build and equilibration inputs."""
     if not 1 <= velocity_seed <= 2_147_483_647:
@@ -493,7 +1149,9 @@ chunks = [
                 "pbc": "xyz",
             }
         ),
-        "md.mdp": _mdp_text(render_production_mdp()),
+        "md.mdp": _mdp_text(
+            render_md_mdp(protocol=protocol, system_kind="soluble")
+        ),
     }
     for filename, content in inputs.items():
         write_bytes_atomic(run_dir / filename, content.encode("utf-8"))
@@ -678,6 +1336,7 @@ def build_md_system(
     ligand_smiles: str,
     ligand_formal_charge: int,
     velocity_seed: int,
+    protocol: MDProtocol = "production",
     command_runner: CommandRunner = _run_system_command,
 ) -> MDSystemBuildResult:
     """Build, salt, minimize and equilibrate one Boltz protein–ligand complex."""
@@ -696,6 +1355,7 @@ def build_md_system(
             run_dir,
             velocity_seed=velocity_seed,
             ligand_formal_charge=ligand_formal_charge,
+            protocol=protocol,
         )
     except (OSError, RuntimeError, ValueError) as error:
         result = MDSystemBuildResult(
@@ -840,3 +1500,121 @@ def parse_completed_ns(log_path: Path) -> float:
     if not values:
         raise ValueError(f"no completed simulation time found in {log_path}")
     return max(float(value) for value in values) / 1_000.0
+
+
+def run_md_trajectory(
+    *,
+    run_dir: Path,
+    protocol: MDProtocol,
+    pocket_residues: list[int],
+    command_runner: CommandRunner = _run_system_command,
+) -> MDTrajectoryResult:
+    """Run checkpoint-aware MD, process PBC, and compute trajectory evidence."""
+    expected_ns = 1.0 if protocol == "smoke" else 100.0
+    analysis_role: Literal[
+        "scientific_evidence", "pipeline_validation_only"
+    ] = (
+        "pipeline_validation_only"
+        if protocol == "smoke"
+        else "scientific_evidence"
+    )
+    commands = [
+        build_grompp_command(run_dir),
+        build_mdrun_command(run_dir),
+    ]
+    for index, command in enumerate(commands, 1):
+        result = command_runner(command, run_dir, None)
+        write_bytes_atomic(
+            run_dir / f"trajectory-{index:02d}.log",
+            (result.stdout + "\n" + result.stderr).encode(errors="replace"),
+        )
+        if result.returncode != 0:
+            return MDTrajectoryResult(
+                status="failed",
+                completed_ns=0,
+                error_code=(
+                    "production_preprocessing_failed"
+                    if index == 1
+                    else "production_run_failed"
+                ),
+            )
+    trajectory = run_dir / "md.xtc"
+    checkpoint = run_dir / "md.cpt"
+    log = run_dir / "md.log"
+    if not all(
+        path.is_file() and path.stat().st_size > 0
+        for path in (trajectory, checkpoint, log)
+    ):
+        return MDTrajectoryResult(
+            status="failed",
+            completed_ns=0,
+            error_code="trajectory_artifact_missing",
+        )
+    pbc_trajectory = run_dir / "md_pbc.xtc"
+    pbc_command = [
+        "gmx",
+        "trjconv",
+        "-s",
+        str(run_dir / "md.tpr"),
+        "-f",
+        str(trajectory),
+        "-o",
+        str(pbc_trajectory),
+        "-pbc",
+        "mol",
+        "-center",
+    ]
+    pbc_result = command_runner(pbc_command, run_dir, "Protein\nSystem\n")
+    write_bytes_atomic(
+        run_dir / "trajectory-03-pbc.log",
+        (pbc_result.stdout + "\n" + pbc_result.stderr).encode(errors="replace"),
+    )
+    if (
+        pbc_result.returncode != 0
+        or not pbc_trajectory.is_file()
+        or pbc_trajectory.stat().st_size == 0
+    ):
+        return MDTrajectoryResult(
+            status="failed",
+            completed_ns=parse_completed_ns(log),
+            error_code="pbc_processing_failed",
+            trajectory_path=trajectory,
+            checkpoint_path=checkpoint,
+        )
+    try:
+        metrics = measure_trajectory(
+            topology=run_dir / "md.tpr",
+            trajectory=pbc_trajectory,
+            log_path=log,
+            pocket_residues=pocket_residues,
+            expected_ns=expected_ns,
+            analysis_role=analysis_role,
+        )
+        analysis: TrajectoryAnalysis = analyze_trajectory(metrics)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        write_bytes_atomic(
+            run_dir / "trajectory_analysis.stderr.log",
+            str(error).encode(errors="replace"),
+        )
+        return MDTrajectoryResult(
+            status="failed",
+            completed_ns=parse_completed_ns(log),
+            error_code="trajectory_analysis_failed",
+            trajectory_path=pbc_trajectory,
+            checkpoint_path=checkpoint,
+        )
+    metrics_path = run_dir / "trajectory_metrics.json"
+    write_artifact(metrics_path, metrics.model_dump(mode="json"))
+    write_artifact(
+        run_dir / "trajectory_analysis.json",
+        analysis.model_dump(mode="json"),
+    )
+    return MDTrajectoryResult(
+        status=analysis.status,
+        completed_ns=metrics.completed_ns,
+        md_score=analysis.md_score,
+        error_code=analysis.error_code,
+        trajectory_path=pbc_trajectory,
+        checkpoint_path=checkpoint,
+        metrics_path=metrics_path,
+    )

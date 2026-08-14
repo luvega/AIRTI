@@ -42,7 +42,8 @@ process SCREEN {
           --ligands ${ligand_manifest} \
           --targets ${target_manifest} \
           --output screened_candidates.jsonl \
-          --asset-dir screen_assets
+          --asset-dir screen_assets \
+          --top-n ${params.screen_top_n}
         """
     }
 }

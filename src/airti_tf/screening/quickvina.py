@@ -31,6 +31,7 @@ class DockingJob(BaseModel):
     output_dir: Path
     exhaustiveness: int = Field(default=8, gt=0)
     num_modes: int = Field(default=9, gt=0)
+    cpu: int = Field(default=0, ge=0)
 
 
 class DockingSeedResult(BaseModel):
@@ -75,7 +76,7 @@ Executor = Callable[[list[str], int], ExecutionResult]
 def _build_command(executable: str, job: DockingJob, seed: int) -> list[str]:
     output = job.output_dir / f"{job.job_id}.seed{seed}.poses.pdbqt"
     log = job.output_dir / f"{job.job_id}.seed{seed}.log"
-    return [
+    command = [
         executable,
         "--receptor",
         str(job.receptor_pdbqt),
@@ -99,11 +100,16 @@ def _build_command(executable: str, job: DockingJob, seed: int) -> list[str]:
         str(job.num_modes),
         "--seed",
         str(seed),
+    ]
+    if job.cpu:
+        command.extend(["--cpu", str(job.cpu)])
+    command.extend([
         "--out",
         str(output),
         "--log",
         str(log),
-    ]
+    ])
+    return command
 
 
 def build_quickvina_command(job: DockingJob, *, seed: int) -> list[str]:

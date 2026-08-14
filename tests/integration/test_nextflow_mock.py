@@ -14,6 +14,7 @@ REQUIRED_MODULES = {
     "refine.nf": "REFINE",
     "md.nf": "MD",
     "report.nf": "REPORT",
+    "evaluate_case.nf": "EVALUATE_CASE",
 }
 NEXTFLOW = shutil.which("nextflow") or (
     str(Path(".tools/nextflow").resolve())
@@ -57,6 +58,15 @@ def test_production_modules_pass_manifests_with_their_asset_directories() -> Non
     assert "tuple path('md_candidates.jsonl'), path('md_assets')" in md
     assert "--candidates ${md_manifest}" in report
     assert "--resume" not in md
+    assert "--protocol ${params.md_protocol}" in md
+
+
+def test_gpu_stages_are_serialized_in_the_single_unified_image() -> None:
+    config = Path("workflow/nextflow.config").read_text(encoding="utf-8")
+
+    assert config.count("maxForks = 1") >= 2
+    assert "md_protocol = 'production'" in config
+    assert "production_image = 'airti-tf:0.2.0-gpu'" in config
 
 
 def test_production_reference_defaults_use_the_documented_data_root() -> None:

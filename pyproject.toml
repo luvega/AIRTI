@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "airti-tf"
-version = "0.1.0"
+version = "0.2.0"
 description = "Auditable human-proteome reverse target fishing pipeline"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "jinja2>=3.1,<4",
+  "MDAnalysis>=2.9,<3",
   "pandas>=2.3,<3",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.6,<3",
@@ -35,11 +36,24 @@ pythonpath = ["src"]
 python_version = "3.11"
 packages = ["airti_tf"]
 strict = true
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
-module = ["yaml", "rdkit.*", "dimorphite_dl.*"]
+module = ["yaml", "dimorphite_dl.*", "MDAnalysis.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["rdkit", "rdkit.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["Bio", "Bio.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
 module = ["airti_tf.ligands.prepare", "airti_tf.screening.background"]
+disable_error_code = ["attr-defined", "no-untyped-call"]
+
+[[tool.mypy.overrides]]
+module = ["airti_tf.simulation.gromacs"]
 disable_error_code = ["attr-defined", "no-untyped-call"]

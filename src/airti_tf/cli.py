@@ -11,7 +11,9 @@ from airti_tf.runtime import collect_host_facts, run_preflight
 
 app = typer.Typer(no_args_is_help=True)
 targets_app = typer.Typer(no_args_is_help=True)
+cases_app = typer.Typer(no_args_is_help=True)
 app.add_typer(targets_app, name="targets")
+app.add_typer(cases_app, name="cases")
 
 
 class Profile(StrEnum):
@@ -22,6 +24,11 @@ class Profile(StrEnum):
 class StructureSource(StrEnum):
     PDB = "pdb"
     ALPHAFOLD = "alphafold"
+
+
+class MDProtocol(StrEnum):
+    SMOKE = "smoke"
+    PRODUCTION = "production"
 
 
 @app.callback()
@@ -83,6 +90,66 @@ def compile_reference(
         output_manifest=output,
     )
     typer.echo(summary.model_dump_json(indent=2))
+
+
+@targets_app.command("build-reference")
+def build_reference(
+    proteome: Path = typer.Option(..., "--proteome", exists=True, readable=True),
+    root: Path = typer.Option(..., "--root", file_okay=False),
+    background_panel: Path = typer.Option(
+        ..., "--background-panel", exists=True, readable=True
+    ),
+    max_pockets: int = typer.Option(3, "--max-pockets", min=1, max=10),
+    workers: int = typer.Option(64, "--workers", min=1),
+    calibration_workers: int = typer.Option(
+        1, "--calibration-workers", min=1, max=64
+    ),
+    resume: bool = typer.Option(False, "--resume"),
+    output: Path = typer.Option(..., "--output"),
+) -> None:
+    """Build a resumable, full-coverage human target library."""
+    from airti_tf.targets.build import build_reference_targets
+
+    summary = build_reference_targets(
+        proteome_manifest=proteome,
+        root=root,
+        background_panel=background_panel,
+        max_pockets=max_pockets,
+        workers=workers,
+        calibration_workers=calibration_workers,
+        resume=resume,
+        output_manifest=output,
+    )
+    typer.echo(summary.model_dump_json(indent=2))
+    if summary.failed_target_count:
+        raise typer.Exit(3)
+
+
+@targets_app.command("gate-reference")
+def gate_reference(
+    proteome: Path = typer.Option(..., "--proteome", exists=True, readable=True),
+    targets: Path = typer.Option(..., "--targets", exists=True, readable=True),
+    expected_target_count: int = typer.Option(
+        ..., "--expected-target-count", min=1
+    ),
+    gold_target_ids: list[str] = typer.Option(
+        [], "--gold-target-id"
+    ),
+    output: Path = typer.Option(..., "--output"),
+) -> None:
+    """Gate a reference on exact coverage, zero failures and gold readiness."""
+    from airti_tf.targets.build import evaluate_reference_gate
+
+    gate = evaluate_reference_gate(
+        proteome_manifest=proteome,
+        target_manifest=targets,
+        expected_target_count=expected_target_count,
+        gold_target_ids=gold_target_ids,
+    )
+    write_artifact(output, gate.model_dump(mode="json"))
+    typer.echo(gate.model_dump_json(indent=2))
+    if not gate.passed:
+        raise typer.Exit(4)
 
 
 @targets_app.command("calibrate-pocket")
@@ -250,6 +317,7 @@ def run_md(
     output: Path = typer.Option(..., "--output"),
     asset_dir: Path = typer.Option(Path("md_assets"), "--asset-dir"),
     top_n: int = typer.Option(10, "--top-n", min=1, max=10),
+    protocol: MDProtocol = typer.Option(MDProtocol.PRODUCTION, "--protocol"),
 ) -> None:
     """Run checkpoint-aware molecular dynamics."""
     from airti_tf.stages import run_md_bundle
@@ -259,6 +327,7 @@ def run_md(
         output_manifest=output,
         asset_dir=asset_dir,
         top_n=top_n,
+        protocol=protocol.value,
     )
     typer.echo(summary.model_dump_json(indent=2))
     if summary.succeeded_candidate_count == 0:
@@ -280,6 +349,48 @@ def render_report_command(
         output_dir=output,
         state_db=state_db,
         project_id=project_id,
+    )
+    typer.echo(summary.model_dump_json(indent=2))
+
+
+@app.command("evaluate-case")
+def evaluate_case_command(
+    case: Path = typer.Option(..., "--case", exists=True, readable=True),
+    screen: Path = typer.Option(..., "--screen", exists=True, readable=True),
+    boltz: Path = typer.Option(..., "--boltz", exists=True, readable=True),
+    md: Path = typer.Option(..., "--md", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output"),
+) -> None:
+    """Evaluate frozen retrospective anchors after all upstream stages finish."""
+    from airti_tf.cases.evaluation import evaluate_case_manifests
+
+    result = evaluate_case_manifests(
+        case_path=case,
+        screen_manifest=screen,
+        boltz_manifest=boltz,
+        md_manifest=md,
+    )
+    write_artifact(output, result.model_dump(mode="json"))
+    typer.echo(result.model_dump_json(indent=2))
+
+
+@cases_app.command("build-panel")
+def build_case_panel_command(
+    case: Path = typer.Option(..., "--case", exists=True, readable=True),
+    spec: Path = typer.Option(..., "--spec", exists=True, readable=True),
+    targets: Path = typer.Option(..., "--targets", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output"),
+    audit: Path = typer.Option(..., "--audit"),
+) -> None:
+    """Build a deterministic ready-only engineering panel."""
+    from airti_tf.cases.panel import build_case_panel
+
+    summary = build_case_panel(
+        case_path=case,
+        panel_spec_path=spec,
+        target_manifest=targets,
+        output_manifest=output,
+        audit_output=audit,
     )
     typer.echo(summary.model_dump_json(indent=2))
 

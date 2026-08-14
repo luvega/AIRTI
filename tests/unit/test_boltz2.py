@@ -56,6 +56,12 @@ def test_boltz_yaml_contains_affinity_and_pocket_constraint(job: BoltzJob) -> No
     assert payload["sequences"][0]["protein"]["msa"].endswith(".a3m")
 
 
+def test_boltz_yaml_carries_essential_ccd_cofactor(job: BoltzJob) -> None:
+    payload = build_boltz_yaml(job.model_copy(update={"cofactors": ["HEM"]}))
+
+    assert payload["sequences"][2] == {"ligand": {"id": "C", "ccd": "HEM"}}
+
+
 def test_missing_cached_msa_blocks_production(job: BoltzJob) -> None:
     missing = job.model_copy(update={"msa_path": Path("missing.a3m")})
 

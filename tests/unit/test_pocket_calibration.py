@@ -69,6 +69,7 @@ def test_calibration_uses_best_state_and_requires_successful_probes(
         output_pdbqt.write_text("ATOM\n", encoding="utf-8")
 
     def run_seed(job: object, seed: int) -> DockingSeedResult:
+        assert getattr(job, "cpu") == 1
         state_index = int(Path(getattr(job, "ligand_pdbqt")).stem.rsplit("-", 1)[-1])
         return DockingSeedResult(
             seed=seed,

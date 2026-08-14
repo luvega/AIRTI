@@ -1,0 +1,25 @@
+schema_version: "1.0"
+panel_id: nelfinavir-engineering-panel-v1
+panel_size: 64
+anchor_count: 6
+family_comparators_per_anchor: 3
+stratified_comparator_count: 40
+selection_seed: 20260814
+family_comparators:
+  # Exact IDs keep the engineering benchmark frozen and auditable. For DDI2
+  # and MBTPS2, the list deliberately expands to the same catalytic or
+  # intramembrane-proteolysis class because the reviewed human exact family is
+  # too small to provide three unique comparators.
+  P08684: [P24462, Q9HB55, P10632]
+  P20815: [P11712, P33261, P20813]
+  P08183: [P21439, Q2M3G0, O95342]
+  Q5TDH0: [Q8WTU0, P10265, P63119]
+  P07900: [P08238, P14625, Q12931]
+  O43462: [Q14703, Q8TCT7, O75844]
+strata:
+  enzyme: 8
+  receptor: 8
+  transporter_or_channel: 8
+  chaperone_or_scaffold: 8
+  other: 8
+comparison_proteins_are_true_negatives: false

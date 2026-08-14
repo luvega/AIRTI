@@ -12,7 +12,7 @@ process LIGAND_PREP {
         """
         mkdir -p prepared_ligands
         cp ${queries} prepared_ligands.jsonl
-        count=\$(grep -cv '^[[:space:]]*\$' prepared_ligands.jsonl)
+        count=\$(grep -Evc '^[[:space:]]*(#|\$)' prepared_ligands.jsonl)
         test "\$count" -ge 1
         test "\$count" -le 5
         """
