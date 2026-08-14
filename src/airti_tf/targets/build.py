@@ -88,7 +88,7 @@ def _fingerprint(
 ) -> str:
     return content_sha256(
         {
-            "builder_schema": "1.3",
+            "builder_schema": "1.4",
             "target_id": record.uniprot_id,
             "sequence_sha256": record.sequence_sha256,
             "release": record.release,

@@ -95,7 +95,7 @@ airti-tf targets gate-reference \
   --output /data/airti-target-fishing/cases/nelfinavir/panel-targets-v1/gate.json
 ```
 
-`--workers` 控制并行靶点数，`--calibration-workers` 控制单个口袋内并行探针数；二者的乘积不应超过节点计划用于 QuickVina2 的 CPU 并发。64 面板只用于工程适配。面板通过后，必须对同一冻结清单的全部 20,416 条记录重复构建和门禁，再把该全库 manifest 交给 Nextflow；不得把面板排名作为全人蛋白组结果。P450 靶点允许生成含 HEM 的 Meeko 对接受体，但进入 MD 前必须按 `cofactor-adapters.md` 安装并核验 `p450-ferric-thiolate-v1`。
+`--workers` 控制并行靶点数，`--calibration-workers` 控制单个口袋内并行探针数；背景校准的每个 QuickVina2 子进程固定使用 1 个 CPU，二者的乘积不应超过节点计划用于 QuickVina2 的 CPU 并发。64 面板只用于工程适配。面板通过后，必须对同一冻结清单的全部 20,416 条记录重复构建和门禁，再把该全库 manifest 交给 Nextflow；不得把面板排名作为全人蛋白组结果。P450 靶点允许生成含 HEM 的 Meeko 对接受体，但进入 MD 前必须按 `cofactor-adapters.md` 安装并核验 `p450-ferric-thiolate-v1`。
 
 ## 6. 结果复核
 
