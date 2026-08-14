@@ -35,6 +35,25 @@
 
 ## 真实引擎实测
 
+### 单镜像与硬件门禁
+
+| 项目 | 实测值 |
+| --- | --- |
+| 镜像 | `airti-tf:0.2.0-gpu` |
+| 本地内容标识 | `sha256:e4963bfd1fb054e657c40b169c9b64de485cb75a5ee46ab1c58413a2557df147` |
+| 源码修订 | `eb8591885d6351cd19864a966f3b1fb5770c44a7` |
+| 镜像大小 | 16,986,092,598 bytes |
+| SPDX 2.3 包数 | 672 |
+| SBOM SHA-256 | `dc823ad1762ec9f35d289fe3e7f4016d9ff80528cdc58c0b7dcabcaf38a744eb` |
+| 硬件 | NVIDIA GeForce RTX 4090 |
+| 硬件冒烟 | QuickVina2、CUDA GROMACS、Boltz-2 全部通过 |
+
+硬件记录位于
+`/data/airti-target-fishing/validation/v0.2.0-hardware-smoke-eb85918`；
+其 `artifacts.sha256` 文件哈希为
+`5f9e62eb09147e708288a0f11cee4e7d21469520ce47fec3dbac1e5951c34d6c`。
+Boltz-2 结构与亲和力模型检查点均通过冻结哈希核验。
+
 ### 代表性受体构建与背景校准
 
 使用单一 `airti-tf:0.2.0-gpu` 镜像，对 CYP3A4（P08684）和 HSP90AA1
@@ -43,13 +62,58 @@
 
 `/data/airti-target-fishing/cases/nelfinavir/target-build-smoke-v8`
 
-此处将在任务完成后记录门禁结果、校准成功数、结构/口袋选择和产物哈希。
+| 靶点 | 结构 / 口袋 | 环境 | 成功探针 | 状态数 / 种子任务 | 背景中位数 |
+| --- | --- | --- | ---: | ---: | ---: |
+| CYP3A4 | PDB 5VCC / fpocket 1 | membrane，保留 HEM | 95/100 | 318 / 954 | −8.4 kcal/mol |
+| HSP90AA1 | PDB 7KRJ / fpocket 32 | soluble | 95/100 | 318 / 954 | −5.6 kcal/mol |
+
+两个靶点均为 `ready`，独立门禁结果为 `passed=true`、2/2 覆盖、0 failed、
+0 unsupported。靶点 manifest SHA-256 为
+`77a836a1c63a6f2f52d4c09da1cc7e570cca1ab50bbd64c69637f2efa8a399bb`，
+门禁 JSON SHA-256 为
+`24a8ac103cb0888903181dd43260247a6e89b954660688fe3919efe090c3ff34`。
+CYP3A4 与 HSP90AA1 校准 JSON SHA-256 分别为
+`93e5788cd1579ef4e1fa13275c787a2eb8e88f70dc08f8266ac2a91deb494201`
+和 `ddeb935bfc11a5b751192ead1b48843d9e56114370add4e13195646e11db60c8`。
+
+本轮以未限制单个 QuickVina 进程 CPU 数的候选镜像启动，实测出现明显过度订阅。
+最终镜像已将背景校准子进程固定为 1 CPU，并由 `calibration_workers` 统一控制并发；
+构建指纹同步升级，旧检查点不会被新版本误复用。
 
 ### Nelfinavir 代表性筛选
 
-此处将在受体校准通过门禁后记录两个冻结配体状态对两个代表性受体的真实
-QuickVina2 输出。该小规模运行只验证数据契约、HEM 受体链路、经验背景归一化和
-断点续跑，不用于报告全蛋白组候选排名。
+两个冻结配体状态对两个代表性受体共形成 4 个对接组合、12 个固定种子任务；全部
+成功，0 failed。筛选 manifest SHA-256 为
+`65b6782677409d82648d0d87d92a535b65488919fc902ff0b798877f175fe441`。
+
+| 代表集顺序 | 靶点 | 入选状态 | 三种子中位数 | 经验分位 | 种子范围 | 构象一致性 |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | CYP3A4 | 中性态 | −11.8 kcal/mol | 0.96875 | 0.1 | 0.653192 |
+| 2 | HSP90AA1 | 中性态 | −7.1 kcal/mol | 0.93750 | 1.7 | 0.000000 |
+
+两种状态均真实完成计算；表中“入选状态”是每个靶点跨状态路由后的最佳状态。CYP3A4
+在这个只含两个已知参照的工程集内位居首位，说明正对照链路可工作。HSP90AA1 虽有
+较高经验分位，但三种子构象不一致，必须降级解释。该小规模运行只验证数据契约、
+HEM 受体链路与经验背景归一化，不用于报告全蛋白组候选排名或新靶点发现。
+
+阳离子态也完成全部种子，其 CYP3A4 和 HSP90AA1 三种子中位数分别为 −11.4 和
+−6.9 kcal/mol，均弱于各靶点入选的中性态。
+
+### 代表性 Boltz-2 精评
+
+对上述两个代表集候选以生产参数执行种子 11/29/47；每个种子包含 3 个扩散结构
+样本与 3 个亲和力样本。精评 manifest SHA-256 为
+`72ff85cff7f2abbd88b407a1a788a2ced4c48ae149375b470aff5e15fe596734`。
+
+| 靶点 | 状态 | 成功种子 | 关键结果 |
+| --- | --- | ---: | --- |
+| CYP3A4 | succeeded | 3/3 | score 0.796325；confidence 0.913126；ligand ipTM 0.886346；口袋约束覆盖 0.756757；亲和力概率 0.629070 |
+| HSP90AA1 | failed | 1/3 | `insufficient_successful_seeds`；种子 11/29/47 的口袋覆盖分别为 0.25、0.50、0.45 |
+
+CYP3A4 的 Boltz 输入明确包含蛋白链 A、Nelfinavir 链 B 和 `CCD: HEM` 链 C，三个
+种子均无严重原子碰撞。HSP90AA1 的种子 11 和 47 未达到预设的 0.50 口袋覆盖门槛，
+与其对接阶段构象一致性为 0 的信号方向一致，因此按预注册规则失败关闭；这不是
+程序崩溃，也不应通过放宽阈值补救。
 
 ## 已验证与尚未执行的边界
 
@@ -57,6 +121,6 @@ QuickVina2 输出。该小规模运行只验证数据契约、HEM 受体链路�
 构建实现、HEM 对接模板生成、单镜像 Nextflow 编排、可恢复检查点以及真实配体准备。
 
 尚未执行：64 蛋白完整对接、20,416 蛋白完整受体资产构建与 Nelfinavir 全库筛选、
-Top 30 Boltz-2、Top 10/Top 3 的 100 ns MD。CYP 的 MD 还必须等待经审计的
+全库 Top 30 Boltz-2、Top 10/Top 3 的 100 ns MD。本记录只完成代表集 Top 2 的
+Boltz-2 精评。CYP 的 MD 还必须等待经审计的
 `p450-ferric-thiolate-v1` 参数适配器；缺失时流程按设计失败关闭。
-
