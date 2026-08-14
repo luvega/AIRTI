@@ -42,10 +42,17 @@ from airti_tf.screening.quickvina import (
     run_docking_seed,
     summarize_seeds,
 )
-from airti_tf.simulation.gromacs import plan_md_replicas
+from airti_tf.simulation.gromacs import (
+    align_boltz_complex_to_reference,
+    build_md_system,
+    build_membrane_md_system,
+    plan_md_replicas,
+    run_md_trajectory,
+)
 from airti_tf.state import StateStore
 
 Profile = Literal["local", "production"]
+TargetEnvironment = Literal["soluble", "soluble_construct", "membrane"]
 PDBQTPreparer = Callable[[Path, Path], None]
 DockingRunner = Callable[[DockingJob, int], DockingSeedResult]
 BoltzRunner = Callable[[BoltzJob, int], BoltzSeedResult]
@@ -94,15 +101,26 @@ class PreparedLigandRow(BaseModel):
         return self
 
 
+class CofactorRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ccd_id: str = Field(pattern=r"^[A-Z0-9]{1,8}$")
+    role: Literal["essential"] = "essential"
+    parameter_id: str = Field(min_length=1)
+
+
 class TargetPocketRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.0"
     target_id: str
     gene_symbol: str | None = None
     family: str
     status: Literal["ready", "unsupported", "failed"]
     unsupported_reason: str | None = None
+    environment: TargetEnvironment = "soluble"
+    orientation_source: str | None = None
+    cofactors: list[CofactorRecord] = Field(default_factory=list)
     sequence: str | None = Field(default=None, pattern=r"^[A-Z]+$")
     sequence_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     model_sequence: str | None = Field(default=None, pattern=r"^[A-Z]+$")
@@ -182,6 +200,8 @@ class TargetPocketRow(BaseModel):
             BackgroundDistribution(
                 pocket_id=str(self.pocket_id), affinities=self.background_affinities
             )
+            if self.environment == "membrane" and not self.orientation_source:
+                raise ValueError("membrane target requires orientation provenance")
         elif self.status == "unsupported" and not self.unsupported_reason:
             raise ValueError("unsupported target row requires unsupported_reason")
         return self
@@ -213,7 +233,7 @@ class TargetCoverageRecord(BaseModel):
 class ScreenCandidateRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     query_id: str
     ligand_id: str
     ligand_state_id: str
@@ -223,6 +243,10 @@ class ScreenCandidateRow(BaseModel):
     target_id: str
     gene_symbol: str | None = None
     family: str
+    environment: TargetEnvironment = "soluble"
+    orientation_source: str | None = None
+    cofactors: list[CofactorRecord] = Field(default_factory=list)
+    reference_structure_path: Path | None = None
     pocket_id: str
     pocket_residues: list[int] = Field(min_length=1)
     model_pocket_residues: list[int] = Field(min_length=1)
@@ -243,6 +267,14 @@ class ScreenCandidateRow(BaseModel):
     selection_reason: str
     screen_rank: int = Field(gt=0)
     target_coverage: TargetCoverageRecord
+
+    @model_validator(mode="after")
+    def validate_environment(self) -> "ScreenCandidateRow":
+        if self.environment == "membrane" and not self.orientation_source:
+            raise ValueError("membrane candidate requires orientation provenance")
+        if self.environment == "membrane" and self.reference_structure_path is None:
+            raise ValueError("membrane candidate requires an oriented reference structure")
+        return self
 
 
 class BoltzRefinementSummary(BaseModel):
@@ -289,6 +321,12 @@ class MDStageResult(BaseModel):
     completed_ns: float = Field(ge=0)
     md_score: float | None = Field(default=None, ge=0, le=1)
     error_code: str | None
+    protocol: Literal["smoke", "production"] = "production"
+    system_kind: Literal["soluble", "membrane"] = "soluble"
+    expected_ns: float = Field(default=100.0, gt=0)
+    analysis_role: Literal[
+        "scientific_evidence", "pipeline_validation_only"
+    ] = "scientific_evidence"
     trajectory_path: Path | None = None
     checkpoint_path: Path | None = None
 
@@ -327,6 +365,12 @@ class MDCandidateRow(BoltzCandidateRow):
     md_replica_success_count: int = Field(ge=0, le=3)
     completed_ns: float = Field(ge=0)
     md_score: float | None = Field(default=None, ge=0, le=1)
+    md_protocol: Literal["smoke", "production"] = "production"
+    md_system_kind: Literal["soluble", "membrane"] = "soluble"
+    md_expected_ns: float = Field(default=100.0, gt=0)
+    md_analysis_role: Literal[
+        "scientific_evidence", "pipeline_validation_only"
+    ] = "scientific_evidence"
     md_replicas: list[MDStageResult]
 
     @model_validator(mode="after")
@@ -351,25 +395,39 @@ class ReportBundleSummary(BaseModel):
     report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-def _parse_smiles_queries(path: Path, *, max_molecules: int) -> list[tuple[str, str]]:
+def _parse_smiles_queries(
+    path: Path, *, max_molecules: int
+) -> list[tuple[str, str, list[str] | None]]:
     if not 1 <= max_molecules <= 5:
         raise ValueError("max_molecules must be between 1 and 5")
-    queries: list[tuple[str, str]] = []
+    queries: list[tuple[str, str, list[str] | None]] = []
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         fields = line.split()
-        if len(fields) != 2:
+        if len(fields) not in {2, 3}:
             raise ValueError(
-                f"SMILES input line {line_number} must contain exactly SMILES and query_id"
+                f"SMILES input line {line_number} must contain SMILES, "
+                "query_id and optional states=<SMILES>|<SMILES>"
             )
-        smiles, query_id = fields
-        queries.append((query_id, smiles))
+        smiles, query_id = fields[:2]
+        explicit_states: list[str] | None = None
+        if len(fields) == 3:
+            if not fields[2].startswith("states="):
+                raise ValueError(
+                    f"SMILES input line {line_number} has an invalid state override"
+                )
+            explicit_states = fields[2][len("states=") :].split("|")
+            if any(not state for state in explicit_states):
+                raise ValueError(
+                    f"SMILES input line {line_number} has an empty state override"
+                )
+        queries.append((query_id, smiles, explicit_states))
     if len(queries) > max_molecules:
         raise ValueError(f"query batch must contain 1 to {max_molecules} molecules")
-    validate_query_batch([smiles for _, smiles in queries])
-    identifiers = [query_id for query_id, _ in queries]
+    validate_query_batch([smiles for _, smiles, _ in queries])
+    identifiers = [query_id for query_id, _, _ in queries]
     if len(set(identifiers)) != len(identifiers):
         raise ValueError("query identifiers must be unique")
     return queries
@@ -417,13 +475,17 @@ def prepare_ligand_bundle(
     asset_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
     failed_queries = 0
-    for query_id, smiles in queries:
-        result = prepare_ligand(smiles, profile=profile)
+    for query_id, smiles, explicit_states in queries:
+        result = prepare_ligand(
+            smiles,
+            profile=profile,
+            explicit_state_smiles=explicit_states,
+        )
         if result.status == "failed":
             failed_queries += 1
             rows.append(
                 {
-                    "schema_version": "1.0",
+                    "schema_version": "1.1",
                     "query_id": query_id,
                     "ligand_id": result.ligand_id,
                     "ligand_state_id": None,
@@ -652,6 +714,19 @@ def screen_ligand_bundle(
             )
             if not staged_msa.is_file():
                 shutil.copyfile(source_msa, staged_msa)
+            assert target.structure_path is not None
+            source_structure = _resolve_manifest_path(
+                target.structure_path, manifest=target_manifest
+            )
+            structure_dir = asset_dir / "structures"
+            structure_dir.mkdir(exist_ok=True)
+            structure_suffix = source_structure.suffix or ".pdb"
+            staged_structure = structure_dir / (
+                f"{target.target_id}.{target.model_sequence_sha256[:12]}"
+                f"{structure_suffix}"
+            )
+            if not staged_structure.is_file():
+                shutil.copyfile(source_structure, staged_structure)
             rows.append(
                 {
                     "schema_version": "1.0",
@@ -664,6 +739,15 @@ def screen_ligand_bundle(
                     "target_id": candidate.target_id,
                     "gene_symbol": target.gene_symbol,
                     "family": candidate.family,
+                    "environment": target.environment,
+                    "orientation_source": target.orientation_source,
+                    "cofactors": [
+                        cofactor.model_dump(mode="json")
+                        for cofactor in target.cofactors
+                    ],
+                    "reference_structure_path": _portable_path(
+                        staged_structure, relative_to=output_manifest.parent
+                    ),
                     "pocket_id": candidate.best_pocket_id,
                     "pocket_residues": target.pocket_residues,
                     "model_pocket_residues": target.model_pocket_residues,
@@ -757,6 +841,7 @@ def refine_boltz_bundle(
                 ligand_state_id=candidate.ligand_state_id,
                 ligand_smiles=candidate.ligand_smiles,
                 ligand_atom_count=candidate.ligand_atom_count,
+                cofactors=[cofactor.ccd_id for cofactor in candidate.cofactors],
                 pocket_residues=candidate.model_pocket_residues,
                 input_yaml=seed_dir / f"{job_id}.yaml",
                 output_dir=seed_dir / "output",
@@ -862,18 +947,105 @@ def refine_boltz_bundle(
     )
 
 
-def _unimplemented_md_runner(
+def _run_md_candidate(
     candidate: BoltzCandidateRow,
     run_dir: Path,
     replica: int,
+    *,
+    protocol: Literal["smoke", "production"],
 ) -> MDStageResult:
-    del candidate, run_dir
+    expected_ns = 1.0 if protocol == "smoke" else 100.0
+    analysis_role: Literal[
+        "scientific_evidence", "pipeline_validation_only"
+    ] = (
+        "pipeline_validation_only"
+        if protocol == "smoke"
+        else "scientific_evidence"
+    )
+    system_kind: Literal["soluble", "membrane"] = (
+        "membrane" if candidate.environment == "membrane" else "soluble"
+    )
+    plans = plan_md_replicas([candidate.target_id])
+    velocity_seed = next(
+        plan.velocity_seed for plan in plans if plan.replica == replica
+    )
+    assert candidate.boltz_structure_path is not None
+    complex_cif = candidate.boltz_structure_path
+    if system_kind == "membrane":
+        if candidate.reference_structure_path is None:
+            build_error = "membrane_reference_structure_missing"
+            build = None
+        else:
+            try:
+                aligned_cif = align_boltz_complex_to_reference(
+                    complex_cif,
+                    reference_pdb=candidate.reference_structure_path,
+                    output_cif=run_dir / "aligned_complex.cif",
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                build_error = "membrane_orientation_alignment_failed"
+                build = None
+            else:
+                cofactor_root = Path(
+                    os.environ.get(
+                        "AIRTI_COFACTOR_PARAMETER_ROOT",
+                        "/data/airti-target-fishing/reference/cofactors",
+                    )
+                )
+                build = build_membrane_md_system(
+                    aligned_cif,
+                    run_dir=run_dir,
+                    ligand_smiles=candidate.ligand_smiles,
+                    ligand_formal_charge=candidate.ligand_formal_charge,
+                    velocity_seed=velocity_seed,
+                    protocol=protocol,
+                    cofactor_parameter_ids=[
+                        cofactor.parameter_id for cofactor in candidate.cofactors
+                    ],
+                    cofactor_parameter_root=cofactor_root,
+                )
+                build_error = build.error_code or "membrane_system_build_failed"
+    elif candidate.cofactors:
+        build = None
+        build_error = "soluble_cofactor_adapter_required"
+    else:
+        build = build_md_system(
+            complex_cif,
+            run_dir=run_dir,
+            ligand_smiles=candidate.ligand_smiles,
+            ligand_formal_charge=candidate.ligand_formal_charge,
+            velocity_seed=velocity_seed,
+            protocol=protocol,
+        )
+        build_error = build.error_code or "soluble_system_build_failed"
+    if build is None or build.status == "failed":
+        return MDStageResult(
+            replica=replica,
+            status="failed",
+            completed_ns=0,
+            error_code=build_error,
+            protocol=protocol,
+            system_kind=system_kind,
+            expected_ns=expected_ns,
+            analysis_role=analysis_role,
+        )
+    trajectory = run_md_trajectory(
+        run_dir=run_dir,
+        protocol=protocol,
+        pocket_residues=candidate.model_pocket_residues,
+    )
     return MDStageResult(
         replica=replica,
-        status="failed",
-        completed_ns=0.0,
-        md_score=None,
-        error_code="md_system_builder_unimplemented",
+        status=trajectory.status,
+        completed_ns=trajectory.completed_ns,
+        md_score=trajectory.md_score,
+        error_code=trajectory.error_code,
+        protocol=protocol,
+        system_kind=system_kind,
+        expected_ns=expected_ns,
+        analysis_role=analysis_role,
+        trajectory_path=trajectory.trajectory_path,
+        checkpoint_path=trajectory.checkpoint_path,
     )
 
 
@@ -883,7 +1055,8 @@ def run_md_bundle(
     output_manifest: Path,
     asset_dir: Path,
     top_n: int,
-    md_runner: MDRunner = _unimplemented_md_runner,
+    protocol: Literal["smoke", "production"] = "production",
+    md_runner: MDRunner | None = None,
 ) -> MDBundleSummary:
     """Route Boltz candidates into Top10/Top3 MD replicas and aggregate evidence."""
     candidates = [
@@ -934,11 +1107,33 @@ def run_md_bundle(
             candidate = candidate_by_target[plan.target_id]
             run_material = f"{query_id}|{candidate.target_id}|{plan.replica}"
             run_id = hashlib.sha256(run_material.encode()).hexdigest()[:20]
-            result = md_runner(
-                candidate,
-                asset_dir / run_id,
-                plan.replica,
-            )
+            run_candidate = candidate
+            if md_runner is None:
+                assert candidate.boltz_structure_path is not None
+                updates: dict[str, object] = {
+                    "boltz_structure_path": _resolve_manifest_path(
+                        candidate.boltz_structure_path,
+                        manifest=boltz_manifest,
+                    )
+                }
+                if candidate.reference_structure_path is not None:
+                    updates["reference_structure_path"] = _resolve_manifest_path(
+                        candidate.reference_structure_path,
+                        manifest=boltz_manifest,
+                    )
+                run_candidate = candidate.model_copy(update=updates)
+                result = _run_md_candidate(
+                    run_candidate,
+                    asset_dir / run_id,
+                    plan.replica,
+                    protocol=protocol,
+                )
+            else:
+                result = md_runner(
+                    run_candidate,
+                    asset_dir / run_id,
+                    plan.replica,
+                )
             replica_results.setdefault((query_id, candidate.target_id), []).append(
                 result
             )
@@ -977,6 +1172,10 @@ def run_md_bundle(
                         (result.completed_ns for result in results), default=0.0
                     ),
                     "md_score": None,
+                    "md_protocol": results[0].protocol,
+                    "md_system_kind": results[0].system_kind,
+                    "md_expected_ns": results[0].expected_ns,
+                    "md_analysis_role": results[0].analysis_role,
                     "md_replicas": replica_payload,
                 }
             )
@@ -994,6 +1193,10 @@ def run_md_bundle(
                 "md_replica_success_count": len(valid),
                 "completed_ns": min(result.completed_ns for result in valid),
                 "md_score": statistics.median(md_scores),
+                "md_protocol": valid[0].protocol,
+                "md_system_kind": valid[0].system_kind,
+                "md_expected_ns": valid[0].expected_ns,
+                "md_analysis_role": valid[0].analysis_role,
                 "md_replicas": replica_payload,
             }
         )

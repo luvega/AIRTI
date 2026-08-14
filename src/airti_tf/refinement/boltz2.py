@@ -37,6 +37,7 @@ class BoltzJob(BaseModel):
     ligand_state_id: str
     ligand_smiles: str
     ligand_atom_count: int = Field(gt=0, le=128)
+    cofactors: list[str] = Field(default_factory=list)
     pocket_residues: list[int] = Field(min_length=1)
     input_yaml: Path
     output_dir: Path
@@ -127,6 +128,10 @@ def build_boltz_yaml(
     if profile == "production" and not job.msa_path.is_file():
         raise MissingMSAError(job.msa_path)
     msa_value = str(job.msa_path) if job.msa_path.is_file() else "empty"
+    cofactor_sequences = [
+        {"ligand": {"id": chr(ord("C") + index), "ccd": ccd_id}}
+        for index, ccd_id in enumerate(job.cofactors)
+    ]
     return {
         "version": 1,
         "sequences": [
@@ -138,6 +143,7 @@ def build_boltz_yaml(
                 }
             },
             {"ligand": {"id": "B", "smiles": job.ligand_smiles}},
+            *cofactor_sequences,
         ],
         "constraints": [
             {
@@ -403,7 +409,7 @@ def assess_boltz_structure(
     """Measure predicted pocket retention and protein-ligand atomic clashes."""
     if not pocket_residues:
         raise ValueError("at least one pocket residue is required for Boltz QC")
-    payload = MMCIF2Dict(str(structure_path))  # type: ignore[no-untyped-call]
+    payload = MMCIF2Dict(str(structure_path))
     required = (
         "_atom_site.auth_asym_id",
         "_atom_site.auth_seq_id",

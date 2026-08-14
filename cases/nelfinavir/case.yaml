@@ -1,0 +1,32 @@
+schema_version: "1.0"
+case_id: nelfinavir-parent-v1
+query_id: nelfinavir-parent
+query_inchikey: QAGYKUNXZHXKMR-HKWSIXNMSA-N
+positive_anchors:
+  - target_id: P08684
+    gene_symbol: CYP3A4
+    tier: gold
+  - target_id: P20815
+    gene_symbol: CYP3A5
+    tier: gold
+  - target_id: P08183
+    gene_symbol: ABCB1
+    tier: silver
+  - target_id: Q5TDH0
+    gene_symbol: DDI2
+    tier: silver
+  - target_id: P07900
+    gene_symbol: HSP90AA1
+    tier: silver
+  - target_id: O43462
+    gene_symbol: MBTPS2
+    tier: silver
+novelty_exclusions:
+  - P08684
+  - P20815
+  - P08183
+  - Q5TDH0
+  - P07900
+  - O43462
+  - P08238
+upstream_visible_target_ids: []

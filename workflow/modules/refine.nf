@@ -35,6 +35,7 @@ process REFINE {
           --output boltz_candidates.jsonl \
           --asset-dir boltz_assets \
           --profile production \
+          --top-n ${params.boltz_top_n} \
           --cache /models/boltz
         """
     }

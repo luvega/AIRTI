@@ -90,6 +90,36 @@ def test_prepare_ligand_bundle_rejects_duplicate_query_ids(tmp_path: Path) -> No
         )
 
 
+def test_prepare_ligand_bundle_accepts_curated_states_on_the_query_line(
+    tmp_path: Path,
+) -> None:
+    queries = tmp_path / "queries.smi"
+    queries.write_text(
+        "CCN query states=CCN|CC[NH3+]\n",
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "prepared.jsonl"
+
+    summary = prepare_ligand_bundle(
+        queries,
+        output_manifest=manifest,
+        asset_dir=tmp_path / "assets",
+        profile="local",
+        max_molecules=5,
+        pdbqt_preparer=lambda _input, output: output.write_text(
+            "REMARK prepared\n", encoding="utf-8"
+        ),
+    )
+
+    rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+    assert summary.state_count == 2
+    assert {row["formal_charge"] for row in rows} == {0, 1}
+    assert all(
+        "curated_protonation_states" in row["uncertainty_flags"]
+        for row in rows
+    )
+
+
 def test_pose_consistency_compares_only_best_pose_from_each_seed(tmp_path: Path) -> None:
     job = DockingJob(
         job_id="pose-test",
@@ -160,11 +190,14 @@ def test_screen_bundle_calibrates_ready_targets_and_preserves_coverage(
     )
     target_manifest = tmp_path / "targets.jsonl"
     ready = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "target_id": "P00533",
         "family": "kinase",
         "status": "ready",
         "unsupported_reason": None,
+        "environment": "soluble",
+        "orientation_source": None,
+        "cofactors": [],
         "sequence": "MPEPTIDE",
         "sequence_sha256": "a" * 64,
         "model_sequence": "MPEPTIDE",
@@ -226,6 +259,10 @@ def test_screen_bundle_calibrates_ready_targets_and_preserves_coverage(
     assert rows[0]["query_id"] == "aspirin"
     assert rows[0]["target_id"] == "P00533"
     assert rows[0]["ligand_formal_charge"] == 0
+    assert rows[0]["environment"] == "soluble"
+    assert rows[0]["cofactors"] == []
+    assert Path(rows[0]["reference_structure_path"]).parts[0] == "screen-assets"
+    assert (output.parent / rows[0]["reference_structure_path"]).is_file()
     assert rows[0]["seed_success_count"] == 3
     assert 0.0 <= rows[0]["calibrated_score"] <= 1.0
     assert rows[0]["target_coverage"] == {
@@ -568,6 +605,7 @@ def test_run_md_cli_forwards_file_contract(
         output_manifest: Path,
         asset_dir: Path,
         top_n: int,
+        protocol: str,
     ) -> MDBundleSummary:
         observed.update(
             {
@@ -575,6 +613,7 @@ def test_run_md_cli_forwards_file_contract(
                 "output": output_manifest,
                 "asset_dir": asset_dir,
                 "top_n": top_n,
+                "protocol": protocol,
             }
         )
         output_manifest.write_text("", encoding="utf-8")
@@ -601,12 +640,15 @@ def test_run_md_cli_forwards_file_contract(
             str(tmp_path / "md-assets"),
             "--top-n",
             "8",
+            "--protocol",
+            "smoke",
         ],
     )
 
     assert result.exit_code == 0, result.stdout
     assert observed["candidates"] == candidates
     assert observed["top_n"] == 8
+    assert observed["protocol"] == "smoke"
 
 
 def test_render_report_bundle_uses_carried_proteome_coverage(tmp_path: Path) -> None:

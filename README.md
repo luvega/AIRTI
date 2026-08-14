@@ -18,12 +18,14 @@ AIRTI Target Fishing 是面向 1–5 个小分子的全人蛋白组反向钓靶�
 
 - 全人 canonical 蛋白清单、结构选择、口袋质控和配体准备的 Python 组件已实现；
 - QuickVina2 三种子初筛、背景校准、Boltz-2 精评和 GROMACS 100 ns 复核适配器已实现；
-- `prepare-ligands`、`screen`、`refine-boltz`、`run-md` 和 `render-report` 五个 CLI 合同均已桥接；其中 `run-md` 的路由与聚合已接入，默认 100 ns 生产执行/轨迹分析 runner 仍保持 fail-closed；
+- `prepare-ligands`、`screen`、`refine-boltz`、`run-md`、`render-report` 和 `evaluate-case` CLI 已桥接；`run-md` 可执行可溶与 POPC/CHL1 膜体系并分析真实轨迹；
 - 分阶段共识排序、工件追溯和报告措辞门控已实现；Nextflow DSL2 已形成可恢复的编排骨架和模拟工具测试链；
 - 现有 Docker/NVIDIA 蛋白质与多肽设计平台已审计并作为运行基础复用；
-- QuickVina2、Boltz-2、CUDA GROMACS、AmberTools、fpocket 与 Meeko 已封装在同一固定版本镜像 `airti-tf:0.1.0-gpu`；
+- QuickVina2、Boltz-2、CUDA GROMACS、AmberTools、PACKMOL-Memgen、MDAnalysis、fpocket 与 Meeko 已封装在同一固定版本镜像 `airti-tf:0.2.0-gpu`；
 - 统一镜像已在当前 RTX 4090 节点通过真实 QuickVina2 搜索、Boltz-2 结构/亲和力推理和 1000 步 GROMACS GPU smoke，并通过任意非 root UID 缓存写入检查；
-- 已冻结 UniProt 2026_02 人源 canonical 清单（20,416 条），并完成仅含一个 ready 靶点的 EGFR/厄洛替尼适配器试点：95/100 背景探针、11/11 配体状态对接和 3/3 Boltz 种子成功；
+- 已冻结 UniProt 2026_02 reviewed human canonical 清单（20,416 条），并实现逐靶点断点、显式 unsupported/failed 状态和零静默丢失的全库构建门禁；
+- 已加入 Nelfinavir 母体案例：CYP3A4/CYP3A5 金标准、四个银标准、64 蛋白工程面板和只在排名完成后读取锚点的评价器；
+- HEM 对接模板保留原始 RCSB CCD 和受控变换 provenance；P450 的 100 ns MD 仍要求独立、经审计的 ferric-thiolate 参数适配器，缺失时失败关闭；
 - EGFR 试点的 AmberTools/ParmEd/GROMACS 体系在修复微小电荷残差后完成最小化、100 ps NVT 和 500 ps NPT；该结果仅证明建模与平衡链路可运行，不代表 100 ns 生产 MD 已通过；
 - 大数据与缓存计划分别使用 `/data/airti-target-fishing` 和 `/mnt/ssd4t/airti-target-fishing`。
 
@@ -35,6 +37,7 @@ AIRTI Target Fishing 是面向 1–5 个小分子的全人蛋白组反向钓靶�
 - [`docs/validation/v0.1.0-hardware-smoke-report.md`](docs/validation/v0.1.0-hardware-smoke-report.md)
 - [`docs/validation/v0.1.0-orchestration-smoke-report.md`](docs/validation/v0.1.0-orchestration-smoke-report.md)
 - [`docs/validation/2026-08-13-egfr-adapter-pilot.md`](docs/validation/2026-08-13-egfr-adapter-pilot.md)
+- [`cases/nelfinavir/README.md`](cases/nelfinavir/README.md)
 - [`docs/operations/runbook.md`](docs/operations/runbook.md)
 
 ## 开发入口
@@ -59,7 +62,7 @@ Nextflow 的 `test` profile 使用模拟工具验证 DAG、交付目录与 `-res
 ## 统一镜像与硬件 smoke
 
 ```bash
-docker build -f containers/airti.Dockerfile -t airti-tf:0.1.0-gpu .
+docker build -f containers/airti.Dockerfile -t airti-tf:0.2.0-gpu .
 ./scripts/run_hardware_smoke.sh
 ```
 
@@ -71,4 +74,4 @@ docker build -f containers/airti.Dockerfile -t airti-tf:0.1.0-gpu .
 airti-tf preflight --profile production --output preflight.json
 ```
 
-当前通过的是统一工具链、GPU 执行路径、模拟编排，以及 EGFR 单 ready 靶点的真实适配器试点，不等同于全人蛋白组端到端验证，也不构成靶点确认。进入无人值守生产前仍需扩展结构/口袋 ready 覆盖，接通默认 100 ns MD 与轨迹分析 runner，并通过 10 例真实检索基准。单次生产任务仅支持 1–5 个查询分子。
+当前通过的是统一工具链、GPU 执行路径、可恢复编排、EGFR 单 ready 靶点试点和 Nelfinavir 案例的工程资产门禁，不等同于 20,416 靶点构建或 Nelfinavir 全流程已经完成，也不构成靶点确认。进入无人值守生产前仍需完成冻结全库、Nelfinavir 64 面板与全库实算、经审计的 P450 HEM MD 参数适配器，以及 10 例真实检索基准。单次生产任务仅支持 1–5 个查询分子。

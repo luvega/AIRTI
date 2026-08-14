@@ -20,4 +20,5 @@ dependencies:
   - pydantic-settings=2.10.1
   - typer=0.16.0
   - jinja2=3.1.6
+  - mdanalysis=2.9.0
   - pyyaml=6.0.2

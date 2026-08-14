@@ -21,6 +21,7 @@ class StructureCandidate(BaseModel):
 
     structure_id: str
     source: StructureSource
+    experimental_method: Literal["x-ray", "electron_microscopy"] | None = None
     coverage: float = Field(ge=0, le=1)
     sequence_identity: float = Field(default=1.0, ge=0, le=1)
     mainchain_missing_fraction: float = Field(default=0.0, ge=0, le=1)
@@ -66,12 +67,13 @@ def _eligibility(
     if candidate.source == "pdb":
         if candidate.resolution is None:
             return "low_confidence"
-        if candidate.has_ligand and candidate.resolution <= 3.0:
+        if candidate.experimental_method == "electron_microscopy":
+            resolution_cutoff = 3.5 if candidate.has_ligand else 3.2
+        else:
+            resolution_cutoff = 3.0 if candidate.has_ligand else 2.8
+        if candidate.resolution <= resolution_cutoff:
             quality = min(1.0, 0.55 * candidate.coverage + 0.45 * (1 - candidate.resolution / 10))
-            return (0, quality)
-        if not candidate.has_ligand and candidate.resolution <= 2.8:
-            quality = min(1.0, 0.50 * candidate.coverage + 0.50 * (1 - candidate.resolution / 10))
-            return (1, quality)
+            return (0 if candidate.has_ligand else 1, quality)
         return "low_confidence"
 
     if (

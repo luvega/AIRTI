@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-PRODUCTION_IMAGE = "airti-tf:0.1.0-gpu"
+PRODUCTION_IMAGE = "airti-tf:0.2.0-gpu"
 EXPECTED_COMMANDS = [
     ["airti-tf", "version"],
     ["fpocket", "--help"],
@@ -181,7 +181,7 @@ def test_hardware_smoke_script_runs_all_three_real_engines() -> None:
     assert script.is_file()
     source = script.read_text(encoding="utf-8")
     assert "set -euo pipefail" in source
-    assert 'IMAGE="${AIRTI_IMAGE:-airti-tf:0.1.0-gpu}"' in source
+    assert 'IMAGE="${AIRTI_IMAGE:-airti-tf:0.2.0-gpu}"' in source
     assert "qvina2 --receptor" in source
     assert "boltz predict" in source
     assert "gmx mdrun" in source

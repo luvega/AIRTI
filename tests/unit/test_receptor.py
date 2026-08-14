@@ -49,3 +49,28 @@ def test_meeko_command_writes_pdbqt_and_exact_box() -> None:
         "1.000",
     ]
 
+
+def test_meeko_command_accepts_named_sdf_and_complete_json_templates() -> None:
+    box = build_box(
+        [AtomCoordinate(coord=(0, 0, 0))],
+        padding_a=5.0,
+        min_size_a=18.0,
+        max_size_a=32.0,
+    )
+
+    command = build_meeko_command(
+        input_pdb=Path("target.pdb"),
+        output_prefix=Path("prepared/target"),
+        box=box,
+        residue_templates={
+            "HEM": Path("HEM-template.json"),
+            "FAD": Path("FAD.sdf"),
+        },
+    )
+
+    additions = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "--add_templates"
+    ]
+    assert additions == ["FAD:FAD.sdf", "HEM-template.json"]

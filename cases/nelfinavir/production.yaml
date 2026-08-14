@@ -1,0 +1,36 @@
+schema_version: "1.0"
+case_id: nelfinavir-parent-v1
+ligand:
+  state_policy: curated_input
+  formal_charges: [0, 1]
+  experimental_pka: [6.00, 11.06]
+  pka_reference_doi: 10.1016/S0378-4347(97)00193-X
+screen:
+  backend: quickvina2
+  seeds: [11, 29, 47]
+  exhaustiveness: 8
+  background_probe_count: 100
+routing:
+  screen_top_n: 300
+  boltz_top_n: 30
+  md_top_n: 10
+  md_replica_top_n: 3
+boltz:
+  diffusion_samples: 3
+  affinity_samples: 3
+md:
+  duration_ns: 100
+  timestep_fs: 2
+  replica_seeds: [11011, 29029, 47047]
+  forcefield: amber_ff19sb
+  ligand_forcefield: gaff2
+  water_model: tip3p
+  membrane:
+    lipid_forcefield: lipid21
+    lipids: [POPC, CHL1]
+    ratio: [4, 1]
+    salt_molar: 0.15
+    restrained_equilibration_ns: 5
+report:
+  final_top_n: 5
+  interpretation: computational_candidates_only

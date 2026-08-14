@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${AIRTI_IMAGE:-airti-tf:0.1.0-gpu}"
+IMAGE="${AIRTI_IMAGE:-airti-tf:0.2.0-gpu}"
 CACHE_ROOT="${AIRTI_BOLTZ_CACHE:-/mnt/ssd4t/airti-target-fishing/boltz}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"

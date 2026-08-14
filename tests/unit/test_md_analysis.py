@@ -59,3 +59,17 @@ def test_energy_discontinuity_is_technical_failure() -> None:
     assert result.error_code == "energy_discontinuity"
     assert result.md_score is None
 
+
+def test_smoke_completeness_uses_declared_duration_not_production_cutoff() -> None:
+    result = analyze_trajectory(
+        metrics(
+            frames=501,
+            expected_frames=501,
+            completed_ns=1.0,
+            expected_ns=1.0,
+            analysis_role="pipeline_validation_only",
+        )
+    )
+
+    assert result.status == "stable"
+    assert result.analysis_role == "pipeline_validation_only"

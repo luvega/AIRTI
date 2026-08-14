@@ -1,0 +1,2 @@
+# Curated from reported Nelfinavir pKa 6.00/11.06: neutral and tertiary-amine cation; phenol and amides remain protonated.
+CC1=C(C=CC=C1O)C(=O)N[C@@H](CSC2=CC=CC=C2)[C@@H](CN3C[C@H]4CCCC[C@H]4C[C@H]3C(=O)NC(C)(C)C)O nelfinavir-parent states=CC1=C(C=CC=C1O)C(=O)N[C@@H](CSC2=CC=CC=C2)[C@@H](CN3C[C@H]4CCCC[C@H]4C[C@H]3C(=O)NC(C)(C)C)O|CC1=C(C=CC=C1O)C(=O)N[C@@H](CSC2=CC=CC=C2)[C@@H](C[NH+]3C[C@H]4CCCC[C@H]4C[C@H]3C(=O)NC(C)(C)C)O
